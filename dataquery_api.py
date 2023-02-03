@@ -216,11 +216,21 @@ class DQInterface:
 
         for i, expr_batch in enumerate(expr_batches):
             params["expressions"] = expr_batch
-            response = self._request(
-                url=OAUTH_BASE_URL + TIMESERIES_ENDPOINT,
-                params=params,
-            )
-            downloaded_data += response.json()
+            while "instruments" not in curr_download:
+                response = self._request(
+                    url=OAUTH_BASE_URL + TIMESERIES_ENDPOINT,
+                    params=params,
+                )
+            curr_download = response.json()
+            
+            if "links" not in curr_download:
+                raise Exception("Invalid response from DataQuery API.")
+            else:
+                    response = self._request(
+                        url=curr_download["links"]["next"],
+                        params=params,
+                    )
+                    curr_download = response.json()
 
         return downloaded_data
 
@@ -237,7 +247,7 @@ if __name__ == "__main__":
     expressions = [
         "DB(JPMAQS,ALM_COCRY_NSA,value)",
         "DB(JPMAQS,USD_EQXR_VT10,value)",
-        "DB(JPMAQS,Metallica,value)",
+        # "DB(JPMAQS,Metallica,value)",
         # "DB(JPMAQS,USD_EQXR_VT10,grading)",
         # "DB(JPMAQS,USD_EQXR_VT10,eop_lag)",
         # "DB(JPMAQS,USD_EQXR_VT10,mop_lag)",
