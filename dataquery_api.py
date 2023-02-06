@@ -10,11 +10,10 @@ https://github.com/macrosynergy/macrosynergy/tree/develop/macrosynergy/download
 
 """
 
-import requests, json
 from typing import List, Optional, Dict, Union
+import requests
 from datetime import datetime
 from time import sleep
-from tqdm import tqdm
 import pandas as pd
 
 # Constants. WARNING : DO NOT MODIFY.
@@ -176,8 +175,6 @@ class DQInterface:
         frequency: str = "FREQ_DAY",
         conversion: str = "CONV_LASTBUS_ABS",
         nan_treatment: str = "NA_NOTHING",
-        run_sequential: bool = False,
-        show_progress: bool = False,
     ) -> Union[List[Dict], pd.DataFrame]:
         """
         Download data from the DataQuery API.
@@ -185,6 +182,8 @@ class DQInterface:
         :param expressions <list>: List of expressions to download
         :param start_date <str>: Start date of data to download
         :param end_date <str>: End date of data to download
+        :param as_dataframe <bool>: Whether to return the data as a Pandas DataFrame, 
+            or as a list of dictionaries. Defaults to True, returning a DataFrame.
         :param calender <str>: Calendar setting from DataQuery's specifications
         :param frequency <str>: Frequency setting from DataQuery's specifications
         :param conversion <str>: Conversion setting from DataQuery's specifications
@@ -218,13 +217,7 @@ class DQInterface:
         assert self.heartbeat(), heartbeat_failed_msg
         print("Heartbeat Successful.")
 
-        for i, expr_batch in tqdm(
-            enumerate(expr_batches),
-            disable=not show_progress,
-            desc="Downloading : ",
-            total=len(expr_batches),
-        ):
-
+        for expr_batch in expr_batches:
             current_params: Dict = params_dict.copy()
             current_params["expressions"]: List = expr_batch
             curr_url: str = OAUTH_BASE_URL + TIMESERIES_ENDPOINT
@@ -276,10 +269,12 @@ def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
         )
         df["expression"] = d["attributes"][0]["expression"]
         dfs += [df]
-
-    return pd.concat(dfs, axis=0).reset_index(drop=True)[
+        
+    return_df =  pd.concat(dfs, axis=0).reset_index(drop=True)[
         ["real_date", "expression", "value"]
     ]
+    return_df["real_date"] = pd.to_datetime(return_df["real_date"])
+    return return_df
 
 
 if __name__ == "__main__":
@@ -292,10 +287,8 @@ if __name__ == "__main__":
     assert dq.heartbeat(), "DataQuery API Heartbeat failed."
 
     expressions = [
-        "DB(JPMAQS,ALM_COCRY_NSA,value)",
         "DB(JPMAQS,USD_EQXR_VT10,value)",
         "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
-        "DB(JPMAQS,Metallica,value)",
     ]
     start_date: str = "2020-01-25"
     end_date: str = "2023-02-05"
