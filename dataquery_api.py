@@ -10,9 +10,10 @@ https://github.com/macrosynergy/macrosynergy/tree/develop/macrosynergy/download
 
 """
 
-import requests
+import requests, json
 from typing import List, Optional, Dict
 from datetime import datetime
+from time import sleep
 from tqdm import tqdm
 
 # Constants. WARNING : DO NOT MODIFY.
@@ -46,11 +47,7 @@ def request_wrapper(
     # this function wraps the requests.request() method in a try/except block
     try:
         response = requests.request(
-            method=method, 
-            url=url, 
-            params=params, 
-            headers=headers, 
-            **kwargs
+            method=method, url=url, params=params, headers=headers, **kwargs
         )
         # Check response
         if response.status_code == 200:
@@ -81,7 +78,7 @@ class DQInterface:
         self.proxy = proxy
         self.dq_resource_id = dq_resource_id
         self.current_token: Optional[dict] = None
-        self.token_data : dict = {
+        self.token_data: dict = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
             "client_secret": self.client_secret,
@@ -111,19 +108,20 @@ class DQInterface:
             else:
                 created: datetime = token["created_at"]
                 expires: int = token["expires_in"]
-                return ((datetime.now() - created).total_seconds() / 60) >= (expires - 1)
+                return ((datetime.now() - created).total_seconds() / 60) >= (
+                    expires - 1
+                )
 
         # if the token is active (and valid), return it; else, make a request for a new token
         if is_active(self.current_token):
             return self.current_token["access_token"]
         else:
-            response = request_wrapper(
+            r_json = request_wrapper(
                 url=OAUTH_TOKEN_URL,
                 data=self.token_data,
                 method="post",
                 proxies=self.proxy,
-            )
-            r_json = response.json()
+            ).json()
             self.current_token = {
                 "access_token": r_json["access_token"],
                 "created_at": datetime.now(),
@@ -164,7 +162,7 @@ class DQInterface:
         )
         # no need for response.ok because
         # response.status_code==200 is checked in the wrapper
-        return "info" in response.json()
+        return ("info" in response.json())
 
     def download(
         self,
@@ -176,6 +174,7 @@ class DQInterface:
         conversion: str = "CONV_LASTBUS_ABS",
         nan_treatment: str = "NA_NOTHING",
         run_sequential: bool = False,
+        show_progress: bool = False,
     ) -> List[Dict]:
         """
         Download data from the DataQuery API.
@@ -194,7 +193,7 @@ class DQInterface:
         :return <list>: List of dictionaries containing data
         """
 
-        params = {
+        params_dict = {
             "format": "JSON",
             "start_date": start_date,
             "end_date": end_date,
@@ -206,33 +205,47 @@ class DQInterface:
         }
 
         expr_batches: List[List[str]] = [
-            expressions[i : min(i + EXPR_LIMIT, len(expressions))]
+            [expressions[i : min(i + EXPR_LIMIT, len(expressions))]]
             for i in range(0, len(expressions), EXPR_LIMIT)
         ]
+        invalid_response_msg = "Invalid response from DataQuery API."
+        heartbeat_failed_msg = "DataQuery API Heartbeat failed."
 
         downloaded_data: List[Dict] = []
+        assert self.heartbeat(), heartbeat_failed_msg
 
-        assert self.heartbeat(), "DataQuery API Heartbeat failed."
+        for i, expr_batch in tqdm(
+            enumerate(expr_batches),
+            disable=not show_progress,
+            desc="Downloading : ", 
+            total=len(expr_batches)):
+            current_params = params_dict.copy()
+            current_params["expressions"] = expr_batch
+            curr_url = OAUTH_BASE_URL + TIMESERIES_ENDPOINT
+            downloaded_data : List[Dict] = []
+            curr_response: Dict = {}
+            # loop to get next page from the response if any
+            get_pagination = True
 
-        for i, expr_batch in enumerate(expr_batches):
-            params["expressions"] = expr_batch
-            while "instruments" not in curr_download:
-                response = self._request(
-                    url=OAUTH_BASE_URL + TIMESERIES_ENDPOINT,
-                    params=params,
-                )
-            curr_download = response.json()
+            while "instruments" not in curr_response.keys():
+                sleep(API_DELAY_PARAM)
+                curr_response = self._request(
+                    url=curr_url, params=current_params
+                ).json()
+                if curr_response is None:
+                    raise Exception(invalid_response_msg)
+                else:
+                    downloaded_data.extend(curr_response["instruments"])
+                    if "links" in curr_response.keys():
+                        if curr_response["links"][1]["next"] is None:
+                            get_pagination = False
+                            break
+                        else:
+                            curr_url = OAUTH_BASE_URL + curr_response["links"][1]["next"]
+                            current_params = {}
             
-            if "links" not in curr_download:
-                raise Exception("Invalid response from DataQuery API.")
-            else:
-                    response = self._request(
-                        url=curr_download["links"]["next"],
-                        params=params,
-                    )
-                    curr_download = response.json()
-
-        return downloaded_data
+            return downloaded_data
+                
 
 
 if __name__ == "__main__":
@@ -248,20 +261,19 @@ if __name__ == "__main__":
         "DB(JPMAQS,ALM_COCRY_NSA,value)",
         "DB(JPMAQS,USD_EQXR_VT10,value)",
         # "DB(JPMAQS,Metallica,value)",
-        # "DB(JPMAQS,USD_EQXR_VT10,grading)",
-        # "DB(JPMAQS,USD_EQXR_VT10,eop_lag)",
-        # "DB(JPMAQS,USD_EQXR_VT10,mop_lag)",
-        # "DB(JPMAQS,USD_INFTARGET_NSA,value)",
-        # "DB(JPMAQS,USD_INFTARGET_NSA,grading)",
-        # "DB(JPMAQS,USD_INFTARGET_NSA,eop_lag)",
-        # "DB(JPMAQS,USD_INFTARGET_NSA,mop_lag)",
-        # "DB(JPMAQS,ZAR_FXXR_NSA,value)",
-        # "DB(JPMAQS,ZAR_FXXR_NSA,grading)",
-        # "DB(JPMAQS,ZAR_FXXR_NSA,eop_lag)",
-        # "DB(JPMAQS,ZAR_FXXR_NSA,mop_lag)",
+        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
+        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,grading)",
+        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,eop_lag)",
+        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,mop_lag)",
+        "DB(JPMAQS,TWD_EXALLOPENNESS_NSA_1YMA,value)",
+        "DB(JPMAQS,TWD_EXALLOPENNESS_NSA_1YMA,grading)",
+        "DB(JPMAQS,TWD_EXALLOPENNESS_NSA_1YMA,eop_lag)",
+        "DB(JPMAQS,TWD_EXALLOPENNESS_NSA_1YMA,mop_lag)",
+
     ]
 
-    start_date = "2020-01-10"
+    start_date = "2023-01-10"
     end_date = "2023-02-01"
-    data = dq.download(expressions, start_date, end_date)
-    print(data)
+    data = dq.download(expressions=expressions, start_date=start_date, end_date=end_date, show_progress=True)
+    for i, d in enumerate(data):
+        print(i, d)

@@ -1,3 +1,19 @@
+*.pem
+*.key
+*.crt
+config*.yml
+credential*.yml
+password*.yml
+secret*.yml
+config*.json
+credential*.json
+password*.json
+secret*.json
+
+##################################################################
+##                          DEFAULTS                            ##
+##################################################################
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -127,3 +143,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
