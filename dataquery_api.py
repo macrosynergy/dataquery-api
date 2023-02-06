@@ -11,10 +11,11 @@ https://github.com/macrosynergy/macrosynergy/tree/develop/macrosynergy/download
 """
 
 import requests, json
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Union
 from datetime import datetime
 from time import sleep
 from tqdm import tqdm
+import pandas as pd
 
 # Constants. WARNING : DO NOT MODIFY.
 OAUTH_BASE_URL: str = (
@@ -31,7 +32,7 @@ EXPR_LIMIT: int = 20  # Maximum number of expressions per request (not per "down
 def request_wrapper(
     url: str,
     headers: Optional[Dict] = None,
-    params: Optional[dict] = None,
+    params: Optional[Dict] = None,
     method: str = "get",
     **kwargs,
 ) -> requests.Response:
@@ -46,7 +47,8 @@ def request_wrapper(
     """
     # this function wraps the requests.request() method in a try/except block
     try:
-        response = requests.request(
+
+        response: requests.Response = requests.request(
             method=method, url=url, params=params, headers=headers, **kwargs
         )
         # Check response
@@ -73,12 +75,12 @@ class DQInterface:
         proxy: Optional[Dict] = None,
         dq_resource_id: Optional[str] = OAUTH_DQ_RESOURCE_ID,
     ):
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.proxy = proxy
-        self.dq_resource_id = dq_resource_id
-        self.current_token: Optional[dict] = None
-        self.token_data: dict = {
+        self.client_id: str = client_id
+        self.client_secret: str = client_secret
+        self.proxy: str = proxy
+        self.dq_resource_id: str = dq_resource_id
+        self.current_token: Optional[Dict] = None
+        self.token_data: Dict = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
             "client_secret": self.client_secret,
@@ -162,20 +164,21 @@ class DQInterface:
         )
         # no need for response.ok because
         # response.status_code==200 is checked in the wrapper
-        return ("info" in response.json())
+        return "info" in response.json()
 
     def download(
         self,
         expressions: List[str],
         start_date: str,
         end_date: str,
+        as_dataframe: bool = True,
         calender: str = "CAL_ALLDAYS",
         frequency: str = "FREQ_DAY",
         conversion: str = "CONV_LASTBUS_ABS",
         nan_treatment: str = "NA_NOTHING",
         run_sequential: bool = False,
         show_progress: bool = False,
-    ) -> List[Dict]:
+    ) -> Union[List[Dict], pd.DataFrame]:
         """
         Download data from the DataQuery API.
         Parameters
@@ -193,10 +196,10 @@ class DQInterface:
         :return <list>: List of dictionaries containing data
         """
 
-        params_dict = {
+        params_dict: Dict = {
             "format": "JSON",
-            "start_date": start_date,
-            "end_date": end_date,
+            "start-date": start_date,
+            "end-date": end_date,
             "calendar": calender,
             "frequency": frequency,
             "conversion": conversion,
@@ -208,31 +211,35 @@ class DQInterface:
             [expressions[i : min(i + EXPR_LIMIT, len(expressions))]]
             for i in range(0, len(expressions), EXPR_LIMIT)
         ]
-        invalid_response_msg = "Invalid response from DataQuery API."
-        heartbeat_failed_msg = "DataQuery API Heartbeat failed."
+        invalid_response_msg: str = "Invalid response from DataQuery API."
+        heartbeat_failed_msg: str = "DataQuery API Heartbeat failed."
 
         downloaded_data: List[Dict] = []
         assert self.heartbeat(), heartbeat_failed_msg
+        print("Heartbeat Successful.")
 
         for i, expr_batch in tqdm(
             enumerate(expr_batches),
             disable=not show_progress,
-            desc="Downloading : ", 
-            total=len(expr_batches)):
-            current_params = params_dict.copy()
-            current_params["expressions"] = expr_batch
-            curr_url = OAUTH_BASE_URL + TIMESERIES_ENDPOINT
-            downloaded_data : List[Dict] = []
+            desc="Downloading : ",
+            total=len(expr_batches),
+        ):
+
+            current_params: Dict = params_dict.copy()
+            current_params["expressions"]: List = expr_batch
+            curr_url: str = OAUTH_BASE_URL + TIMESERIES_ENDPOINT
+            downloaded_data: List[Dict] = []
             curr_response: Dict = {}
             # loop to get next page from the response if any
-            get_pagination = True
-
-            while "instruments" not in curr_response.keys():
+            get_pagination: bool = True
+            while get_pagination:
                 sleep(API_DELAY_PARAM)
-                curr_response = self._request(
+                curr_response: Dict = self._request(
                     url=curr_url, params=current_params
                 ).json()
-                if curr_response is None:
+                if (curr_response is None) or (
+                    "instruments" not in curr_response.keys()
+                ):
                     raise Exception(invalid_response_msg)
                 else:
                     downloaded_data.extend(curr_response["instruments"])
@@ -241,39 +248,59 @@ class DQInterface:
                             get_pagination = False
                             break
                         else:
-                            curr_url = OAUTH_BASE_URL + curr_response["links"][1]["next"]
+                            curr_url = (
+                                OAUTH_BASE_URL + curr_response["links"][1]["next"]
+                            )
                             current_params = {}
-            
-            return downloaded_data
-                
+
+        
+        if as_dataframe:
+            downloaded_data  : pd.DataFrame = time_series_to_df(downloaded_data)
+        
+        return downloaded_data
+
+
+def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
+    """
+    Convert the downloaded data to a pandas DataFrame.
+    Parameters
+    :param dicts_list <list>: List of dictionaries containing time series
+        data from the DataQuery API
+    Returns
+    :return <pd.DataFrame>: DataFrame containing the data
+    """
+    dfs: List = []
+    for d in dicts_list:
+        df = pd.DataFrame(
+            d["attributes"][0]["time-series"], columns=["real_date", "value"]
+        )
+        df["expression"] = d["attributes"][0]["expression"]
+        dfs += [df]
+
+    return pd.concat(dfs, axis=0).reset_index(drop=True)[
+        ["real_date", "expression", "value"]
+    ]
 
 
 if __name__ == "__main__":
     import os
 
-    client_id = os.environ["JPMAQS_API_CLIENT_ID"]
-    client_secret = os.environ["JPMAQS_API_CLIENT_SECRET"]
-    dq = DQInterface(client_id, client_secret)
+    client_id: str = os.environ["JPMAQS_API_CLIENT_ID"]
+    client_secret: str = os.environ["JPMAQS_API_CLIENT_SECRET"]
 
+    dq: DQInterface = DQInterface(client_id, client_secret)
     assert dq.heartbeat(), "DataQuery API Heartbeat failed."
 
     expressions = [
         "DB(JPMAQS,ALM_COCRY_NSA,value)",
         "DB(JPMAQS,USD_EQXR_VT10,value)",
-        # "DB(JPMAQS,Metallica,value)",
         "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
-        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,grading)",
-        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,eop_lag)",
-        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,mop_lag)",
-        "DB(JPMAQS,TWD_EXALLOPENNESS_NSA_1YMA,value)",
-        "DB(JPMAQS,TWD_EXALLOPENNESS_NSA_1YMA,grading)",
-        "DB(JPMAQS,TWD_EXALLOPENNESS_NSA_1YMA,eop_lag)",
-        "DB(JPMAQS,TWD_EXALLOPENNESS_NSA_1YMA,mop_lag)",
-
+        "DB(JPMAQS,Metallica,value)",
     ]
+    start_date: str = "2020-01-25"
+    end_date: str = "2023-02-05"
 
-    start_date = "2023-01-10"
-    end_date = "2023-02-01"
-    data = dq.download(expressions=expressions, start_date=start_date, end_date=end_date, show_progress=True)
-    for i, d in enumerate(data):
-        print(i, d)
+    data: pd.DataFrame() = dq.download(
+        expressions=expressions, start_date=start_date, end_date=end_date
+    )
+    print(data.head())
