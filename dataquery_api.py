@@ -149,7 +149,7 @@ class DQInterface:
             method="get",
             proxies=self.proxy,
             **kwargs,
-        )
+        ).json()
 
     def heartbeat(self) -> bool:
         """
@@ -163,7 +163,7 @@ class DQInterface:
         )
         # no need for response.ok because
         # response.status_code==200 is checked in the wrapper
-        return "info" in response.json()
+        return "info" in response
 
     def download(
         self,
@@ -229,7 +229,7 @@ class DQInterface:
                 sleep(API_DELAY_PARAM)
                 curr_response: Dict = self._request(
                     url=curr_url, params=current_params
-                ).json()
+                )
                 if (curr_response is None) or (
                     "instruments" not in curr_response.keys()
                 ):
