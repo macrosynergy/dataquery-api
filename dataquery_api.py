@@ -293,7 +293,10 @@ if __name__ == "__main__":
     start_date: str = "2020-01-25"
     end_date: str = "2023-02-05"
 
-    data: pd.DataFrame() = dq.download(
+    data: Union[List[Dict], pd.DataFrame] = dq.download(
         expressions=expressions, start_date=start_date, end_date=end_date
     )
-    print(data.head())
+    if isinstance(data, pd.DataFrame):
+        print(data.head())
+    else:
+        print(data[:min(5, len(data))])
