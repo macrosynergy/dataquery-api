@@ -1,8 +1,8 @@
 # dataquery-api
 
-A simple boilerplate API client for the [JPMorgan DataQuery](https://www.jpmorgan.com/solutions/cib/markets/dataquery)[API](https://developer.jpmorgan.com/products/dataquery_api).
+A simple Python API client for the [JPMorgan DataQuery](https://www.jpmorgan.com/solutions/cib/markets/dataquery)[API](https://developer.jpmorgan.com/products/dataquery_api).
 
-# Running the example
+# Getting Started
 
 ## Requirements:
 
@@ -26,7 +26,7 @@ git clone https://github.com/macrosynergy/dataquery-api.git
 python -m pip install -r requirements.txt
 ```
 
-3. Running the example:
+## Running `example.py`:
 
 You'll need to replace the `client_id` and `client_secret` in `dataquery_api.py` with your own OAuth credentials. This can be using a config.yml/json file, environment variables, or hardcoding them in the file (not recommended).
 
@@ -64,4 +64,3 @@ data: pd.DataFrame() = dq.download(
 print(data.head())
 
 ```
-
