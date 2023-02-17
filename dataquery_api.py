@@ -46,7 +46,6 @@ def request_wrapper(
     """
     # this function wraps the requests.request() method in a try/except block
     try:
-
         response: requests.Response = requests.request(
             method=method, url=url, params=params, headers=headers, **kwargs
         )
@@ -182,7 +181,7 @@ class DQInterface:
         :param expressions <list>: List of expressions to download
         :param start_date <str>: Start date of data to download
         :param end_date <str>: End date of data to download
-        :param as_dataframe <bool>: Whether to return the data as a Pandas DataFrame, 
+        :param as_dataframe <bool>: Whether to return the data as a Pandas DataFrame,
             or as a list of dictionaries. Defaults to True, returning a DataFrame.
         :param calender <str>: Calendar setting from DataQuery's specifications
         :param frequency <str>: Frequency setting from DataQuery's specifications
@@ -227,9 +226,7 @@ class DQInterface:
             get_pagination: bool = True
             while get_pagination:
                 sleep(API_DELAY_PARAM)
-                curr_response: Dict = self._request(
-                    url=curr_url, params=current_params
-                )
+                curr_response: Dict = self._request(url=curr_url, params=current_params)
                 if (curr_response is None) or (
                     "instruments" not in curr_response.keys()
                 ):
@@ -246,10 +243,9 @@ class DQInterface:
                             )
                             current_params = {}
 
-        
         if as_dataframe:
-            downloaded_data  : pd.DataFrame = time_series_to_df(downloaded_data)
-        
+            downloaded_data: pd.DataFrame = time_series_to_df(downloaded_data)
+
         return downloaded_data
 
 
@@ -269,8 +265,8 @@ def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
         )
         df["expression"] = d["attributes"][0]["expression"]
         dfs += [df]
-        
-    return_df =  pd.concat(dfs, axis=0).reset_index(drop=True)[
+
+    return_df = pd.concat(dfs, axis=0).reset_index(drop=True)[
         ["real_date", "expression", "value"]
     ]
     return_df["real_date"] = pd.to_datetime(return_df["real_date"])
@@ -293,7 +289,10 @@ if __name__ == "__main__":
     start_date: str = "2020-01-25"
     end_date: str = "2023-02-05"
 
-    data: pd.DataFrame() = dq.download(
+    data: Union[List[Dict], pd.DataFrame] = dq.download(
         expressions=expressions, start_date=start_date, end_date=end_date
     )
-    print(data.head())
+    if isinstance(data, pd.DataFrame):
+        print(data.head())
+    else:
+        print(data[:min(5, len(data))])
