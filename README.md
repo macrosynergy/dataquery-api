@@ -56,7 +56,7 @@ start_date: str = "2020-01-25"
 end_date: str = "2023-02-05"
 
 # download the data
-data: pd.DataFrame() = dq.download(
+data: pd.DataFrame = dq.download(
     expressions=expressions, start_date=start_date, end_date=end_date
 )
 
