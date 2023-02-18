@@ -24,7 +24,7 @@ const (
 type DQInterface struct {
 	clientID     string
 	clientSecret string
-	proxy        string
+	// proxy        string
 	dqResourceID string
 	currentToken *Token
 	tokenData    url.Values
@@ -60,18 +60,16 @@ func requestWrapper(url string, headers http.Header, params url.Values, method s
 }
 
 // NewDQInterface returns a new instance of the DQInterface type.
-func NewDQInterface(clientID string, clientSecret string, proxy string, dqResourceID string) *DQInterface {
+func NewDQInterface(clientID string, clientSecret string) *DQInterface {
 	return &DQInterface{
 		clientID:     clientID,
 		clientSecret: clientSecret,
-		proxy:        proxy,
-		dqResourceID: dqResourceID,
 		currentToken: nil,
 		tokenData: url.Values{
 			"grant_type":    {"client_credentials"},
 			"client_id":     {clientID},
 			"client_secret": {clientSecret},
-			"aud":           {dqResourceID},
+			"aud":           {oauthDqResourceID},
 		},
 	}
 }
@@ -82,8 +80,8 @@ func (dq *DQInterface) GetAccessToken() string {
 		return dq.currentToken.AccessToken
 	}
 
-	res, err := requestWrapper(oauthTokenURL, http.Header{}, 
-										dq.tokenData, "POST")
+	res, err := requestWrapper(oauthTokenURL, http.Header{},
+		dq.tokenData, "POST")
 	if err != nil {
 		panic(err)
 	}
@@ -107,10 +105,11 @@ func (t *Token) isActive() bool {
 	}
 }
 
-
 // Heartbeat returns true if the heartbeat request is successful.
 func (dq *DQInterface) Heartbeat() bool {
-	res, err := requestWrapper(oauthBaseURL+heartbeatEndpoint, http.Header{}, url.Values{"data": {"NO_REFERENCE_DATA"}}, "GET")
+	res, err := requestWrapper(oauthBaseURL+heartbeatEndpoint,
+		http.Header{"Authorization": {"Bearer " + dq.GetAccessToken()}},
+		url.Values{"data": {"NO_REFERENCE_DATA"}}, "GET")
 	if err != nil {
 		panic(err)
 	}
@@ -124,28 +123,30 @@ func (dq *DQInterface) Heartbeat() bool {
 
 // Download returns a list of dictionaries containing the data for the given expressions.
 
-func (dq *DQInterface) Download(expressions []string, format string, 
-	start_date string, end_date string, calender string, frequency string, 
-	conversion string, nan_treatment string) []map[string]interface{} {
+func (dq *DQInterface) Download(expressions []string, format string,
+	start_date string, end_date string) []map[string]interface{} {
 
-		
+	calender := "CAL_ALLDAYS"
+	frequency := "FREQ_DAY"
+	conversion := "CONV_LASTBUS_ABS"
+	nan_treatment := "NA_NOTHING"
+	ref_data := "NO_REFERENCE_DATA"
 	params := url.Values{
-		"format":         {format},
-		"start-date":     {start_date},
-		"end-date":       {end_date},
-		"calendar":       {calender},
-		"frequency":      {frequency},
-		"conversion":     {conversion},
-		"nan_treatment":  {nan_treatment},
-		"data":           {"NO_REFERENCE_DATA"}}
-	
-	
+		"format":        {format},
+		"start-date":    {start_date},
+		"end-date":      {end_date},
+		"calendar":      {calender},
+		"frequency":     {frequency},
+		"conversion":    {conversion},
+		"nan_treatment": {nan_treatment},
+		"data":          {ref_data}}
+
 	if !dq.Heartbeat() {
 		panic("Heartbeat failed.")
 	}
 
 	var data []map[string]interface{}
-	
+
 	for i := 0; i < len(expressions); i += exprLimit {
 		end := i + exprLimit
 		if end > len(expressions) {
@@ -154,34 +155,78 @@ func (dq *DQInterface) Download(expressions []string, format string,
 
 		exprSlice := expressions[i:end]
 		// sleep to avoid hitting the rate limit.
-	
+
 		time.Sleep(time.Duration(apiDelayParam * 1000 * 1000 * 1000))
-		
+
 		// bool get_pagination = true
 		var get_pagination bool = true
 		for get_pagination {
 			var curr_params url.Values = params
 			curr_params["expressions"] = exprSlice
 			var curr_url string = oauthBaseURL + timeSeriesEndpoint
-			res, err := requestWrapper(curr_url, 
-				http.Header{"Authorization": {"Bearer " + dq.GetAccessToken()}}, 
+			res, err := requestWrapper(curr_url,
+				http.Header{"Authorization": {"Bearer " + dq.GetAccessToken()}},
 				curr_params, "GET")
-				
 			if err != nil {
 				panic(err)
 			}
 			defer res.Body.Close()
-			
-			// if the response is nil, or it doesn't contain the "instruments" key, panic.
 			var response map[string]interface{}
 			json.NewDecoder(res.Body).Decode(&response)
-			vx, ok := response["instruments"]
+			v, ok := response["instruments"]
 			if response == nil || !ok {
 				panic("Invalid response from DataQuery API.")
+			} else {
+				data = append(data, v.([]map[string]interface{})...)
+
+				if v, ok := response["links"]; ok {
+					if v.([]interface{})[1].(map[string]interface{})["next"] != nil {
+						curr_url = v.([]interface{})[1].(map[string]interface{})["next"].(string)
+					} else {
+						get_pagination = false
+					}
+				} else {
+					get_pagination = false
+				}
 			}
-			
-			// append 
+		}
+	}
+	return data
+}
 
+// func (dq *DQInterface) extract_timeseries(downloaded_data []map[string]interface{}) []map[string]interface{} {
+// 	// create a list of lists to store the timeseries data
+// 	var timeseries_data []map[string]interface{}
+// 	for i := 0; i < len(downloaded_data); i++ {
+// 		// get dictionary for the current instrument
+// 		d := downloaded_data[i].(map[[]]interface{})
+// 		// get the expression for the current instrument
+// 		expr := d["attributes"][0]["expression"]
+// 		for j := 0; j < len(d["attributes"][0]["timeseries"].([]interface{})); j++ {
+// 			// the first item in the list is the date. convert it from dateteime64[ns] to string
+// 			date := d["attributes"][0]["timeseries"].([]interface{})[j].([]interface{})[0].(time.Time).Format("2006-01-02")
+// 			// the second item in the list is the value. read it as a float64
+// 			value := d["attributes"][0]["timeseries"].([]interface{})[j].([]interface{})[1].(float64)
+// 			// create a dictionary to store the data
+// 			var timeseries_dict map[string]interface{}
+// 			timeseries_dict["date"] = date
+// 			timeseries_dict["value"] = value
+// 			timeseries_dict["expression"] = expr
+// 			// append the dictionary to the list
+// 			timeseries_data = append(timeseries_data, timeseries_dict)
+// 		}
+// 	}
+// 	return timeseries_data
+// }
 
-			// if "links" in response, check if response["links"][1]["next"] is not nil
+// create a main function to test the code
+func main() {
 
+	client_id := "<your_client_id>"
+	client_secret := "<your_client_secret>"
+
+	// create a DQInterface object
+	dq := NewDQInterface(client_id, client_secret)
+	dq.Heartbeat()
+
+}
