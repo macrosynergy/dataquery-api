@@ -78,22 +78,22 @@ func NewDQInterface(clientID string, clientSecret string) *DQInterface {
 func (dq *DQInterface) GetAccessToken() string {
 	if dq.currentToken != nil && dq.currentToken.isActive() {
 		return dq.currentToken.AccessToken
+	} else {
+		res, err := requestWrapper(oauthTokenURL, http.Header{},
+			dq.tokenData, "POST")
+		if err != nil {
+			panic(err)
+		}
+		defer res.Body.Close()
+
+		var token Token
+		json.NewDecoder(res.Body).Decode(&token)
+
+		token.CreatedAt = time.Now()
+		dq.currentToken = &token
+
+		return dq.currentToken.AccessToken
 	}
-
-	res, err := requestWrapper(oauthTokenURL, http.Header{},
-		dq.tokenData, "POST")
-	if err != nil {
-		panic(err)
-	}
-	defer res.Body.Close()
-
-	var token Token
-	json.NewDecoder(res.Body).Decode(&token)
-
-	token.CreatedAt = time.Now()
-	dq.currentToken = &token
-
-	return dq.currentToken.AccessToken
 }
 
 // IsActive returns true if the access token is active.
