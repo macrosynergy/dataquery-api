@@ -1,3 +1,4 @@
+library(R6)
 library(httr)
 library(jsonlite)
 
@@ -19,7 +20,8 @@ request_wrapper <- function(url, headers = NULL, params = NULL,
       if (response$status_code == 200) {
         return(response)
       } else {
-        stop(paste0("Request failed with status code ", response$status_code, "."))
+        stop(paste0("Request failed with status code ", 
+        response$status_code, "."))
       }
     },
     error = function(e) {
@@ -38,53 +40,62 @@ request_wrapper <- function(url, headers = NULL, params = NULL,
   )
 }
 
-DQInterface <- function(client_id, client_secret, proxy = NULL,
-                          dq_resource_id = OAUTH_DQ_RESOURCE_ID) {
-  dq_obj <- list(
-    client_id = client_id,
-    client_secret = client_secret,
-    proxy = proxy,
-    dq_resource_id = dq_resource_id,
-    current_token = NULL,
-    token_data = list(
-      grant_type = "client_credentials",
-      client_id = client_id,
-      client_secret = client_secret,
-      aud = dq_resource_id
-    )
-  )
 
-  get_access_token <- function() {
-    is_active <- function(token = NULL) {
-      if (is.null(token)) {
-        return(FALSE)
-      } else {
-        created <- as.POSIXct(token$created_at)
-        expires <- token$expires_in
-        return(((Sys.time() - created) / 60) >= (expires - 1))
-      }
-    }
 
-    if (is_active(dq_obj$current_token)) {
-      return(dq_obj$current_token$access_token)
-    } else {
-      r_json <- request_wrapper(
-        url = OAUTH_TOKEN_URL,
-        data = dq_obj$token_data,
-        method = "POST",
-        use_proxy = ifelse(!is.null(dq_obj$proxy), "use", "no"),
-        proxy = dq_obj$proxy
-      ) %>%
-        content(as = "text") %>%
-        fromJSON()
-      dq_obj$current_token <- list(
-        access_token = r_json$access_token,
-        created_at = as.character(Sys.time()),
-        expires_in = r_json$expires_in
+DQInterface <- R6Class("DQInterface",
+  public = list(
+    initialize = function(client_id, client_secret, proxy = NULL,
+      dq_resource_id = OAUTH_DQ_RESOURCE_ID) {
+      self$client_id <- client_id
+      self$client_secret <- client_secret
+      self$proxy <- proxy
+      self$dq_resource_id <- dq_resource_id
+    },
+    heartbeat = function() {
+      response <- request_wrapper(
+        url = paste0(OAUTH_BASE_URL, HEARTBEAT_ENDPOINT),
+        params = list(data = "NO_REFERENCE_DATA")
       )
-      return(dq_obj$current_token$access_token)
+      return("info" %in% names(response))
     }
-  }
+
+  ),
+  private = list(
+    get_access_token = function() {
+      is_active <- function(token) {
+        if (is.null(token)) {
+          return(FALSE)
+        } else {
+          created <- as.POSIXct(token$created_at, tz = "UTC")
+          expires <- token$expires_in
+          return((as.numeric(difftime(Sys.time(),
+                  created, units = "mins")) / 60) >=
+                  (expires - 1))
+        }
+      }
+
+      if (is_active(self$current_token)) {
+        return(self$current_token$access_token)
+      } else {
+        response <- request_wrapper(OAUTH_TOKEN_URL,
+          body = list(
+            grant_type = "client_credentials",
+            client_id = self$client_id,
+            client_secret = self$client_secret,
+            aud = self$dq_resource_id
+          ),
+          encode = "form",
+          config = add_proxy(self$proxy)
+        )
+        r_json <- jsonlite::fromJSON(httr::content(response, as = "text"))
+        self$current_token <- list(
+          access_token = r_json$access_token,
+          created_at = as.character(Sys.time(), tz = "UTC"),
+          expires_in = r_json$expires_in
+        )
+        return(self$current_token$access_token)
+      }
+    },
 
   requestx <- function(url, params, ...) {
     response <- request_wrapper(
@@ -99,24 +110,17 @@ DQInterface <- function(client_id, client_secret, proxy = NULL,
       fromJSON()
     return(response)
   }
-
-  heartbeat <- function() {
-    response <- requestx(
-      url = paste0(OAUTH_BASE_URL, HEARTBEAT_ENDPOINT),
-      params = list(data = "NO_REFERENCE_DATA")
-    )
-    return("info" %in% names(response))
-  }
-}
+  )
+)
 
 # create a main function to call the DQInterface
-client_id <- "<YOUR_CLIENT_ID>"
-client_secret <- "<YOUR_CLIENT_SECRET>"
+
+client_id <- "<your_client_id>"
+client_secret <- "<your_client_secret>"
+dq_res_id <- OAUTH_DQ_RESOURCE_ID
 proxy <- NULL
-dq_resource_id <- OAUTH_DQ_RESOURCE_ID
-dq_obj <- DQInterface(client_id, client_secret, proxy, dq_resource_id)
-if (dq_obj$heartbeat()) {
-  return(dq_obj)
-} else {
-  stop("Heartbeat failed. Check your credentials.")
-}
+dq_obj <- DQInterface$new(client_id, client_secret, dq_res_id)
+
+
+dq_obj$heartbeat()
+
