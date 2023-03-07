@@ -85,6 +85,13 @@ class DQInterface:
             "aud": self.dq_resource_id,
         }
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is not None:
+            print(f"Exception : {exc_type}, {exc_value}, {traceback}")
+
     def get_access_token(self) -> str:
         """
         Helper function to verify if the current token is active and valid,
@@ -274,13 +281,14 @@ def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    import os
+    import os, yaml
 
-    client_id: str = os.environ["JPMAQS_API_CLIENT_ID"]
-    client_secret: str = os.environ["JPMAQS_API_CLIENT_SECRET"]
-
-    dq: DQInterface = DQInterface(client_id, client_secret)
-    assert dq.heartbeat(), "DataQuery API Heartbeat failed."
+    # client_id: str = os.environ["JPMAQS_API_CLIENT_ID"]
+    # client_secret: str = os.environ["JPMAQS_API_CLIENT_SECRET"]
+    with open("config.yml", "r") as f:
+        config = yaml.safe_load(f)
+    client_id = config["client_id"]
+    client_secret = config["client_secret"]
 
     expressions = [
         "DB(JPMAQS,USD_EQXR_VT10,value)",
@@ -289,9 +297,14 @@ if __name__ == "__main__":
     start_date: str = "2020-01-25"
     end_date: str = "2023-02-05"
 
-    data: Union[List[Dict], pd.DataFrame] = dq.download(
-        expressions=expressions, start_date=start_date, end_date=end_date
-    )
+    with DQInterface(client_id, client_secret) as dq:
+        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
+        data: Union[List[Dict], pd.DataFrame] = dq.download(
+            expressions=expressions, start_date=start_date, end_date=end_date
+        )
+
+    # dq: DQInterface = DQInterface(client_id, client_secret) -- to use without context manager
+
     if isinstance(data, pd.DataFrame):
         print(data.head())
     else:
