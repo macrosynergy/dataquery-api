@@ -5,6 +5,9 @@ config*.yml
 credential*.yml
 password*.yml
 secret*.yml
+credential*.yaml
+password*.yaml
+secret*.yaml
 config*.json
 credential*.json
 password*.json
