@@ -11,8 +11,8 @@ https://github.com/macrosynergy/macrosynergy/tree/develop/macrosynergy/download
 """
 
 from typing import List, Optional, Dict, Union
-import requests
-from datetime import datetime
+import requests, requests.compat
+from datetime import datetime, timezone
 from time import sleep
 import pandas as pd
 
@@ -26,6 +26,22 @@ OAUTH_TOKEN_URL: str = "https://authe.jpmchase.com/as/token.oauth2"
 OAUTH_DQ_RESOURCE_ID: str = "JPMC:URI:RS-06785-DataQueryExternalApi-PROD"
 API_DELAY_PARAM: float = 0.3  # 300ms delay between requests.
 EXPR_LIMIT: int = 20  # Maximum number of expressions per request (not per "download").
+
+
+def form_full_url(url: str, params: Dict = {}) -> str:
+    """
+    Forms a full URL from a base URL and a dictionary of parameters.
+    Useful for logging and debugging.
+
+    :param <str> url: base URL.
+    :param <dict> params: dictionary of parameters.
+
+    :return <str>: full URL
+    """
+    return requests.compat.quote(
+        (f"{url}?{requests.compat.urlencode(params)}" if params else url),
+        safe="%/:=&?~#+!$,;'@()*[]",
+    )
 
 
 def request_wrapper(
@@ -164,13 +180,50 @@ class DQInterface:
         # response.status_code==200 is checked in the wrapper
         return "info" in response
 
+    def _fetch_data(self, url: str, params: dict, **kwargs) -> requests.Response:
+        downloaded_data: List[Dict] = []
+        response: Dict = self._request(url=url, params=params, **kwargs)
+
+        if (response is None) or ("instruments" not in response.keys()):
+            if response is not None:
+                if (
+                    ("info" in response)
+                    and ("code" in response["info"])
+                    and (int(response["info"]["code"]) == 204)
+                ):
+                    raise Exception(
+                        f"Content was not found for the request: {response}\n"
+                        f"User ID: {self.auth.get_auth()['user_id']}\n"
+                        f"URL: {form_full_url(url, params)}\n"
+                        f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
+                    )
+
+            raise Exception(
+                f"Invalid response from DataQuery: {response}\n"
+                f"User ID: {self.auth.get_auth()['user_id']}\n"
+                f"URL: {form_full_url(url, params)}"
+                f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
+            )
+
+        downloaded_data.extend(response["instruments"])
+
+        if "links" in response.keys() and response["links"][1]["next"] is not None:
+            downloaded_data.extend(
+                self._fetch_data(
+                    url=OAUTH_BASE_URL + response["links"][1]["next"],
+                    params={},
+                )
+            )
+
+        return downloaded_data
+
     def download(
         self,
         expressions: List[str],
         start_date: str,
         end_date: str,
         as_dataframe: bool = True,
-        calender: str = "CAL_ALLDAYS",
+        calender: str = "CAL_WEEKDAYS",
         frequency: str = "FREQ_DAY",
         conversion: str = "CONV_LASTBUS_ABS",
         nan_treatment: str = "NA_NOTHING",
@@ -218,9 +271,8 @@ class DQInterface:
 
         for expr_batch in expr_batches:
             current_params: Dict = params_dict.copy()
-            current_params["expressions"]: List = expr_batch
+            current_params["expressions"] = expr_batch
             curr_url: str = OAUTH_BASE_URL + TIMESERIES_ENDPOINT
-            downloaded_data: List[Dict] = []
             curr_response: Dict = {}
             # loop to get next page from the response if any
             get_pagination: bool = True
@@ -244,9 +296,9 @@ class DQInterface:
                             current_params = {}
 
         if as_dataframe:
-            downloaded_data: pd.DataFrame = time_series_to_df(downloaded_data)
-
-        return downloaded_data
+            return time_series_to_df(downloaded_data)
+        else:
+            return downloaded_data
 
 
 def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
@@ -285,12 +337,17 @@ if __name__ == "__main__":
     expressions = [
         "DB(JPMAQS,USD_EQXR_VT10,value)",
         "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
+        "DB(CFX,USD,)",
+        "DB(CFX,AUD,)",
+        "DB(CFX,GBP,)",
     ]
     start_date: str = "2020-01-25"
     end_date: str = "2023-02-05"
 
-    data: Union[List[Dict], pd.DataFrame] = dq.download(
-        expressions=expressions, start_date=start_date, end_date=end_date
+    data: pd.DataFrame = dq.download(
+        expressions=expressions,
+        start_date=start_date,
+        end_date=end_date,
     )
     if isinstance(data, pd.DataFrame):
         print(data.head())
