@@ -276,8 +276,8 @@ def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
 if __name__ == "__main__":
     import os
 
-    client_id: str = os.environ["JPMAQS_API_CLIENT_ID"]
-    client_secret: str = os.environ["JPMAQS_API_CLIENT_SECRET"]
+    client_id: str = os.getenv("DQ_CLIENT_ID")
+    client_secret: str = os.getenv("DQ_CLIENT_SECRET")
 
     dq: DQInterface = DQInterface(client_id, client_secret)
     assert dq.heartbeat(), "DataQuery API Heartbeat failed."
@@ -295,4 +295,4 @@ if __name__ == "__main__":
     if isinstance(data, pd.DataFrame):
         print(data.head())
     else:
-        print(data[:min(5, len(data))])
+        print(data[: min(5, len(data))])
