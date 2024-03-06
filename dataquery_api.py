@@ -112,6 +112,11 @@ class DQInterface:
             "aud": self.dq_resource_id,
         }
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args, **kwargs): ...
+
     def get_access_token(self) -> str:
         """
         Helper function to verify if the current token is active and valid,
