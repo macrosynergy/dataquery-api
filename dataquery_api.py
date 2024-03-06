@@ -1,28 +1,39 @@
 """A Python wrapper for the JPMorgan DataQuery API.
 This script is meant as a guide to using the JPMorgan DataQuery API.
 This module does not contain any error handling, and will break if any errors are raised.
-For JPMaQS specific functionality, see the macrosynergy.download module.
+For JPMaQS specific functionality, see the :
 
-Macrosynergy Package : https://github.com/macrosynergy/macrosynergy
+- [Macrosynergy package documentations](https://macrosynergy.readthedocs.io/)
 
-The Macrosynergy package download module : 
-https://github.com/macrosynergy/macrosynergy/tree/develop/macrosynergy/download
+- [`macrosynergy.download` documentation](https://macrosynergy.readthedocs.io/stable/macrosynergy).
+
+- [Macrosynergy package on GitHub](https://macrosynergy.readthedocs.io/stable/macrosynergy.download.html).
 
 """
 
 try:
-    from typing import List, Optional, Dict, Union
-    import requests, requests.compat
-    from datetime import datetime as datetime, timezone, timedelta
+    import concurrent.futures
+    from datetime import datetime as datetime
+    from datetime import timedelta, timezone
     from time import sleep
+    from typing import Dict, List, Optional, Union, overload, Generator
+    import os
     import pandas as pd
+    import requests
+    import requests.compat
+    import logging
+    from tqdm import tqdm
 except ImportError as e:
     print(f"Import Error: {e}")
     print(
         "Please install the required packages in your Python "
         "environment using the following command:"
     )
-    print("\n\t python -m pip install pandas requests\n")
+    print("\n\t python -m pip install pandas requests tqdm\n")
+
+
+logger = logging.getLogger(__name__)
+
 
 # Constants. WARNING : DO NOT MODIFY.
 OAUTH_BASE_URL: str = (
@@ -37,6 +48,7 @@ API_DELAY_PARAM: float = 0.2  # 200ms delay between requests.
 TOKEN_EXPIRY_BUFFER: float = 0.9  # 90% of token expiry time.
 EXPR_LIMIT: int = 20  # Maximum number of expressions per request (not per "download").
 JPMAQS_GROUP_ID: str = "JPMAQS"
+MAX_RETRY: int = 3  # Maximum number of retries for failed requests
 
 
 def form_full_url(url: str, params: Dict = {}) -> str:
@@ -53,6 +65,60 @@ def form_full_url(url: str, params: Dict = {}) -> str:
         (f"{url}?{requests.compat.urlencode(params)}" if params else url),
         safe="%/:=&?~#+!$,;'@()*[]",
     )
+
+
+@overload
+def construct_jpmaqs_expressions(
+    ticker: List[str], metrics: List[str]
+) -> List[str]: ...
+
+
+@overload
+def construct_jpmaqs_expressions(ticker: str, metrics: List[str]) -> List[str]: ...
+
+
+def construct_jpmaqs_expressions(
+    ticker: Union[str, List[str]],
+    metrics: List[str] = ["value", "grading", "eop_lag", "mop_lag"],
+) -> List[str]:
+    """
+    Construct a list of expressions for the JPMaQS group.
+
+    :param <str|List[str]> ticker: ticker or list of tickers to construct expressions for.
+    :param <List[str]> metrics: list of metrics to construct expressions for.
+    :return <List[str]>: list of expressions.
+    """
+    if isinstance(ticker, str):
+        return [f"DB(JPMAQS,{ticker},{metric})" for metric in metrics]
+
+    return [f"DB(JPMAQS,{t},{metric})" for t in ticker for metric in metrics]
+
+
+def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
+    """
+    Convert a list of timeseries dictionaries/JSONs to a pandas DataFrame.
+    Parameters
+    :param dicts_list <list>: List of dictionaries containing time series
+        data from the DataQuery API
+    Returns
+    :return <pd.DataFrame>: DataFrame containing the data
+    """
+    if isinstance(dicts_list, dict):
+        dicts_list = [dicts_list]
+
+    expressions = [d["attributes"][0]["expression"] for d in dicts_list]
+    return_df = pd.concat(
+        [
+            pd.DataFrame(
+                dicts_list.pop()["attributes"][0]["time-series"],
+                columns=["real_date", "value"],
+            ).assign(expression=expressions.pop())
+            for _ in range(len(dicts_list))
+        ],
+        axis=0,
+    ).reset_index(drop=True)[["real_date", "expression", "value"]]
+    return_df["real_date"] = pd.to_datetime(return_df["real_date"])
+    return return_df
 
 
 def request_wrapper(
@@ -98,6 +164,7 @@ class DQInterface:
         client_id: str,
         client_secret: str,
         proxy: Optional[Dict] = None,
+        base_url: str = OAUTH_BASE_URL,
         dq_resource_id: Optional[str] = OAUTH_DQ_RESOURCE_ID,
     ):
         self.client_id: str = client_id
@@ -105,12 +172,18 @@ class DQInterface:
         self.proxy: str = proxy
         self.dq_resource_id: str = dq_resource_id
         self.current_token: Optional[Dict] = None
+        self.base_url: str = base_url
         self.token_data: Dict = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
             "client_secret": self.client_secret,
             "aud": self.dq_resource_id,
         }
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args, **kwargs): ...
 
     def get_access_token(self) -> str:
         """
@@ -166,21 +239,31 @@ class DQInterface:
             **kwargs,
         ).json()
 
-    def heartbeat(self) -> bool:
+    def heartbeat(self, raise_error: bool = False) -> bool:
         """
         Check if the DataQuery API is up.
+
+        :param raise_error <bool>: Whether to raise an exception if the API is down.
+
         Returns
         :return <bool>: True if up, False otherwise
         """
+        url: str = self.base_url + HEARTBEAT_ENDPOINT
         response: requests.Response = self._request(
-            url=OAUTH_BASE_URL + HEARTBEAT_ENDPOINT,
-            params={"data": "NO_REFERENCE_DATA"},
+            url=url, params={"data": "NO_REFERENCE_DATA"}
         )
-        # no need for response.ok because
-        # response.status_code==200 is checked in the wrapper
-        return "info" in response
 
-    def _fetch_data(self, url: str, params: dict, **kwargs) -> requests.Response:
+        result = "info" in response
+        if not result and raise_error:
+            raise Exception(
+                f"DataQuery API Heartbeat failed. \n Response : {response} \n"
+                f"User ID: {self.get_access_token()['user_id']}\n"
+                f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
+            )
+
+        return result
+
+    def _fetch(self, url: str, params: dict, **kwargs) -> requests.Response:
         downloaded_data: List[Dict] = []
         response: Dict = self._request(url=url, params=params, **kwargs)
 
@@ -209,11 +292,162 @@ class DQInterface:
 
         if "links" in response.keys() and response["links"][1]["next"] is not None:
             downloaded_data.extend(
-                self._fetch_data(
-                    url=OAUTH_BASE_URL + response["links"][1]["next"],
+                self._fetch(
+                    url=self.base_url + response["links"][1]["next"],
                     params={},
                 )
             )
+
+        return downloaded_data
+
+    def get_catalogue(
+        self,
+        group_id: str = JPMAQS_GROUP_ID,
+        verbose: bool = True,
+    ) -> List[str]:
+        """
+        Method to get the JPMaQS catalogue.
+        Queries the DataQuery API's Groups/Search endpoint to get the list of
+        tickers in the JPMaQS group. The group ID can be changed to fetch a
+        different group's catalogue.
+
+        :param <str> group_id: the group ID to fetch the catalogue for.
+
+        :return <List[str]>: list of tickers in the JPMaQS group.
+
+        :raises <ValueError>: if the response from the server is not valid.
+        """
+        if verbose:
+            print(f"Downloading the {group_id} catalogue from DataQuery...")
+        try:
+            response_list: Dict = self._fetch(
+                url=self.base_url + CATALOGUE_ENDPOINT,
+                params={"group-id": group_id},
+            )
+        except Exception as e:
+            raise e
+
+        tickers: List[str] = [d["instrument-name"] for d in response_list]
+        utkr_count: int = len(tickers)
+        tkr_idx: List[int] = sorted([d["item"] for d in response_list])
+
+        if not (
+            (min(tkr_idx) == 1)
+            and (max(tkr_idx) == utkr_count)
+            and (len(set(tkr_idx)) == utkr_count)
+        ):
+            raise ValueError("The downloaded catalogue is corrupt.")
+
+        return tickers
+
+    def _save_csvs(self, timeseries_list: List[Dict], save_to_path: str) -> List[bool]:
+        """
+        Save the downloaded timeseries data to a file.
+        Parameters
+        :param timeseries_list <list>: List of dictionaries containing data
+        :param path <str>: Path to save the file to
+        """
+        assert os.path.exists(save_to_path), f"Path {save_to_path} does not exist."
+        expressions = [d["attributes"][0]["expression"] for d in timeseries_list]
+        results = []
+        while len(timeseries_list) > 0:
+            expr = timeseries_list[0]["attributes"][0]["expression"]
+            pth = os.path.join(save_to_path, f"{expr}.csv")
+            (
+                time_series_to_df(timeseries_list.pop(0))
+                .drop(columns=["expression"])
+                .dropna()
+                .reset_index(drop=True)
+                .to_csv(pth, index=False)
+            )
+            results.append(os.path.exists(pth))
+
+        return results
+
+    def _get_timeseries(
+        self,
+        expressions: List[str],
+        params: Dict,
+        as_dataframe: bool = True,
+        save_to_path: Optional[str] = None,
+        max_retry: int = MAX_RETRY,
+        show_progress: bool = True,
+        **kwargs,
+    ) -> List[Dict]:
+        """
+        Download data from the DataQuery API.
+        Parameters
+        :param expressions <list>: List of expressions to download
+        :param params <dict>: Dictionary of parameters to pass to the request
+        Returns
+        :return <list>: List of dictionaries containing data
+        """
+        if max_retry < 0:
+            raise Exception("Maximum number of retries reached.")
+
+        expr_batches: List[List[str]] = [
+            [expressions[i : min(i + EXPR_LIMIT, len(expressions))]]
+            for i in range(0, len(expressions), EXPR_LIMIT)
+        ]
+
+        downloaded_data: List[Union[Dict, pd.DataFrame]] = []
+        failed_batches: List[List[str]] = []
+        if self.heartbeat(raise_error=True):
+            print(f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}")
+            print("Connected to DataQuery API!")
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures: List[concurrent.futures.Future] = []
+            for expr_batch in tqdm(expr_batches, desc="Requesting data"):
+                current_params: Dict = params.copy()
+                current_params["expressions"] = expr_batch
+                curr_url: str = self.base_url + TIMESERIES_ENDPOINT
+                futures.append(
+                    executor.submit(
+                        self._fetch,
+                        url=curr_url,
+                        params=current_params,
+                    )
+                )
+            for ix, future in enumerate(futures):
+                try:
+                    result = future.result()
+                    if save_to_path is not None:
+                        result = self._save_csvs(result, save_to_path)
+                        if not all(result):
+                            raise Exception(
+                                f"Failed to save data to path `{save_to_path}` for batch {ix}."
+                            )
+                    downloaded_data.extend(result)
+
+                except Exception as e:
+                    failed_batches.append(expr_batches[ix])
+                    logger.error(f"Failed to download data for batch {ix} : {e}")
+
+        if len(failed_batches) > 0:
+            retry_exprs: List[str] = [
+                expr for batch in failed_batches for expr in batch
+            ]
+            if max_retry > 0:
+                print(
+                    f"Retrying failed expressions: {retry_exprs};",
+                    f"\nRetries left: {max_retry}",
+                )
+                return self._get_timeseries(
+                    expressions=retry_exprs,
+                    params=params,
+                    as_dataframe=as_dataframe,
+                    save_to_path=save_to_path,
+                    max_retry=max_retry - 1,
+                    show_progress=show_progress,
+                    **kwargs,
+                )
+            else:
+                print(
+                    f"Failed to download data for expressions: {retry_exprs}",
+                    "\nMaximum number of retries reached, skipping failed expressions.",
+                )
+                return []
 
         return downloaded_data
 
@@ -223,6 +457,8 @@ class DQInterface:
         start_date: str,
         end_date: str,
         as_dataframe: bool = True,
+        save_to_path: Optional[str] = None,
+        show_progress: bool = True,
         calender: str = "CAL_WEEKDAYS",
         frequency: str = "FREQ_DAY",
         conversion: str = "CONV_LASTBUS_ABS",
@@ -236,6 +472,7 @@ class DQInterface:
         :param end_date <str>: End date of data to download
         :param as_dataframe <bool>: Whether to return the data as a Pandas DataFrame,
             or as a list of dictionaries. Defaults to True, returning a DataFrame.
+        :param show_progress <bool>: Whether to show a progress bar for the download.
         :param calender <str>: Calendar setting from DataQuery's specifications
         :param frequency <str>: Frequency setting from DataQuery's specifications
         :param conversion <str>: Conversion setting from DataQuery's specifications
@@ -246,6 +483,9 @@ class DQInterface:
         Returns
         :return <list>: List of dictionaries containing data
         """
+        if save_to_path is not None:
+            save_to_path = os.path.expanduser(save_to_path)
+            os.makedirs(os.path.normpath(save_to_path), exist_ok=True)
 
         params_dict: Dict = {
             "format": "JSON",
@@ -257,54 +497,27 @@ class DQInterface:
             "nan_treatment": nan_treatment,
             "data": "NO_REFERENCE_DATA",
         }
-
-        expr_batches: List[List[str]] = [
-            [expressions[i : min(i + EXPR_LIMIT, len(expressions))]]
-            for i in range(0, len(expressions), EXPR_LIMIT)
-        ]
-        invalid_response_msg: str = "Invalid response from DataQuery API."
-        heartbeat_failed_msg: str = "DataQuery API Heartbeat failed."
-
-        downloaded_data: List[Dict] = []
-        assert self.heartbeat(), heartbeat_failed_msg
-        print("Heartbeat Successful.")
-
-        for expr_batch in expr_batches:
-            current_params: Dict = params_dict.copy()
-            current_params["expressions"] = expr_batch
-            curr_url: str = OAUTH_BASE_URL + TIMESERIES_ENDPOINT
-            downloaded_data.extend(
-                self._fetch_data(url=curr_url, params=current_params)
+        downloaded_data: Union[List[Dict], List[bool], pd.DataFrame] = (
+            self._get_timeseries(
+                expressions=expressions,
+                params=params_dict,
+                as_dataframe=as_dataframe,
+                save_to_path=save_to_path,
+                show_progress=show_progress,
             )
-
+        )
+        print(
+            f"Download done."
+            f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
+        )
+        if save_to_path:
+            print(f"Data saved to {save_to_path}.")
+            print(f"Downloaded {sum(downloaded_data)}/{len(downloaded_data)} files.")
+            return
         if as_dataframe:
             return time_series_to_df(downloaded_data)
         else:
             return downloaded_data
-
-
-def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
-    """
-    Convert the downloaded data to a pandas DataFrame.
-    Parameters
-    :param dicts_list <list>: List of dictionaries containing time series
-        data from the DataQuery API
-    Returns
-    :return <pd.DataFrame>: DataFrame containing the data
-    """
-    dfs: List = []
-    for d in dicts_list:
-        df = pd.DataFrame(
-            d["attributes"][0]["time-series"], columns=["real_date", "value"]
-        )
-        df["expression"] = d["attributes"][0]["expression"]
-        dfs += [df]
-
-    return_df = pd.concat(dfs, axis=0).reset_index(drop=True)[
-        ["real_date", "expression", "value"]
-    ]
-    return_df["real_date"] = pd.to_datetime(return_df["real_date"])
-    return return_df
 
 
 if __name__ == "__main__":
@@ -313,24 +526,30 @@ if __name__ == "__main__":
     client_id: str = os.getenv("DQ_CLIENT_ID")
     client_secret: str = os.getenv("DQ_CLIENT_SECRET")
 
-    dq: DQInterface = DQInterface(client_id, client_secret)
-    assert dq.heartbeat(), "DataQuery API Heartbeat failed."
-
     expressions = [
-        "DB(JPMAQS,USD_EQXR_VT10,value)",
-        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
         "DB(CFX,USD,)",
         "DB(CFX,AUD,)",
         "DB(CFX,GBP,)",
+        "DB(JPMAQS,USD_EQXR_VT10,value)",
+        "DB(JPMAQS,EUR_EQXR_VT10,value)",
+        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
+        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,grading)",
+        "DB(JPMAQS,GBP_EXALLOPENNESS_NSA_1YMA,eop_lag)",
+        "DB(JPMAQS,GBP_EXALLOPENNESS_NSA_1YMA,mop_lag)",
     ]
+
     start_date: str = "2020-01-25"
     end_date: str = "2023-02-05"
 
-    data: pd.DataFrame = dq.download(
-        expressions=expressions,
-        start_date=start_date,
-        end_date=end_date,
-    )
+    with DQInterface(client_id, client_secret) as dq:
+        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
+        data: pd.DataFrame = dq.download(
+            expressions=expressions,
+            start_date=start_date,
+            end_date=end_date,
+            save_to_path="./data",
+        )
+
     if isinstance(data, pd.DataFrame):
         print(data.head())
     else:
