@@ -10,11 +10,19 @@ https://github.com/macrosynergy/macrosynergy/tree/develop/macrosynergy/download
 
 """
 
-from typing import List, Optional, Dict, Union
-import requests, requests.compat
-from datetime import datetime as datetime, timezone, timedelta
-from time import sleep
-import pandas as pd
+try:
+    from typing import List, Optional, Dict, Union
+    import requests, requests.compat
+    from datetime import datetime as datetime, timezone, timedelta
+    from time import sleep
+    import pandas as pd
+except ImportError as e:
+    print(f"Import Error: {e}")
+    print(
+        "Please install the required packages in your Python "
+        "environment using the following command:"
+    )
+    print("\n\t python -m pip install pandas requests\n")
 
 # Constants. WARNING : DO NOT MODIFY.
 OAUTH_BASE_URL: str = (
