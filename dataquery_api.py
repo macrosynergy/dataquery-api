@@ -12,7 +12,7 @@ https://github.com/macrosynergy/macrosynergy/tree/develop/macrosynergy/download
 
 from typing import List, Optional, Dict, Union
 import requests, requests.compat
-from datetime import datetime, timezone
+from datetime import datetime as datetime, timezone, timedelta
 from time import sleep
 import pandas as pd
 
@@ -22,10 +22,13 @@ OAUTH_BASE_URL: str = (
 )
 TIMESERIES_ENDPOINT: str = "/expressions/time-series"
 HEARTBEAT_ENDPOINT: str = "/services/heartbeat"
+CATALOGUE_ENDPOINT: str = "/group/instruments"
 OAUTH_TOKEN_URL: str = "https://authe.jpmchase.com/as/token.oauth2"
 OAUTH_DQ_RESOURCE_ID: str = "JPMC:URI:RS-06785-DataQueryExternalApi-PROD"
-API_DELAY_PARAM: float = 0.3  # 300ms delay between requests.
+API_DELAY_PARAM: float = 0.2  # 200ms delay between requests.
+TOKEN_EXPIRY_BUFFER: float = 0.9  # 90% of token expiry time.
 EXPR_LIMIT: int = 20  # Maximum number of expressions per request (not per "download").
+JPMAQS_GROUP_ID: str = "JPMAQS"
 
 
 def form_full_url(url: str, params: Dict = {}) -> str:
@@ -109,27 +112,16 @@ class DQInterface:
         :return <str>: Access token
         """
 
-        def is_active(token: Optional[dict] = None) -> bool:
-            """
-            Helper function to check if a token is active.
-            Parameters
-            :param token <dict>: Token to check. Can be None, which will return False.
-            Returns
-            :return <bool>: True if token is active, False otherwise
-            """
-            # return (token is None) or (datetime.now() - \
-            # token["created_at"]).total_seconds() / 60 >= (token["expires_in"] - 1)
+        def _is_active(token: Optional[dict] = None) -> bool:
             if token is None:
                 return False
-            else:
-                created: datetime = token["created_at"]
-                expires: int = token["expires_in"]
-                return ((datetime.now() - created).total_seconds() / 60) >= (
-                    expires - 1
-                )
+            expires: datetime = token["created_at"] + timedelta(
+                seconds=token["expires_in"] * TOKEN_EXPIRY_BUFFER
+            )
+            return datetime.now() < expires
 
         # if the token is active (and valid), return it; else, make a request for a new token
-        if is_active(self.current_token):
+        if _is_active(self.current_token):
             return self.current_token["access_token"]
         else:
             r_json = request_wrapper(
@@ -193,14 +185,14 @@ class DQInterface:
                 ):
                     raise Exception(
                         f"Content was not found for the request: {response}\n"
-                        f"User ID: {self.auth.get_auth()['user_id']}\n"
+                        f"User ID: {self.get_access_token()['user_id']}\n"
                         f"URL: {form_full_url(url, params)}\n"
                         f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
                     )
 
             raise Exception(
                 f"Invalid response from DataQuery: {response}\n"
-                f"User ID: {self.auth.get_auth()['user_id']}\n"
+                f"User ID: {self.get_access_token()['user_id']}\n"
                 f"URL: {form_full_url(url, params)}"
                 f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
             )
@@ -273,27 +265,9 @@ class DQInterface:
             current_params: Dict = params_dict.copy()
             current_params["expressions"] = expr_batch
             curr_url: str = OAUTH_BASE_URL + TIMESERIES_ENDPOINT
-            curr_response: Dict = {}
-            # loop to get next page from the response if any
-            get_pagination: bool = True
-            while get_pagination:
-                sleep(API_DELAY_PARAM)
-                curr_response: Dict = self._request(url=curr_url, params=current_params)
-                if (curr_response is None) or (
-                    "instruments" not in curr_response.keys()
-                ):
-                    raise Exception(invalid_response_msg)
-                else:
-                    downloaded_data.extend(curr_response["instruments"])
-                    if "links" in curr_response.keys():
-                        if curr_response["links"][1]["next"] is None:
-                            get_pagination = False
-                            break
-                        else:
-                            curr_url = (
-                                OAUTH_BASE_URL + curr_response["links"][1]["next"]
-                            )
-                            current_params = {}
+            downloaded_data.extend(
+                self._fetch_data(url=curr_url, params=current_params)
+            )
 
         if as_dataframe:
             return time_series_to_df(downloaded_data)
