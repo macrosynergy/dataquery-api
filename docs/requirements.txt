@@ -1,5 +1,6 @@
 sphinx
 sphinx-autodoc-typehints
 myst-parser
+sphinx_copybutton
 furo
 sphinxcontrib-mermaid
