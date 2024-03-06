@@ -1,9 +1,9 @@
-.. Macrosynergy's DataQueryInterface documentation master file, created by
+.. dataquery-api documentation master file, created by
    sphinx-quickstart on Wed Mar  6 00:50:34 2024.
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Macrosynergy's DataQueryInterface
+dataquery-api
 =================================
 
 .. toctree::

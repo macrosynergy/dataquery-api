@@ -6,7 +6,7 @@ import os
 import shutil
 
 
-PYTHON_FILES = ["./dataquery_api"]
+PYTHON_FILES = ["./dataquery_api.py"]
 
 
 def format_docstring(docstr: str):
@@ -46,15 +46,6 @@ def format_python_file(file_path: str):
             file.write(format_docstring(line))
 
 
-def format_python_files(root_dir: str):
-    """
-    Formats the docstrings in all python files in the given directory.
-    :param <str> root_dir: The root directory to search for python files.
-    """
-    for file in glob.glob(f"{root_dir}/**/*.py", recursive=True):
-        format_python_file(file)
-
-
 def generate_docs():
     """
     Generates the documentation for the project.
@@ -67,7 +58,7 @@ def generate_docs():
 
     # format the docstrings in the python files
     for file in PYTHON_FILES:
-        format_python_files(file)
+        format_python_file(file)
 
     makescript = "make" + (".bat" if os.name == "nt" else "")
     makehtml = makescript + " html"
