@@ -2,7 +2,7 @@ import sys
 
 sys.path.append('../../')
 
-import dataquery_api
+# import dataquery_api
 from dataquery_api import DQInterface
 
 
@@ -14,7 +14,7 @@ from dataquery_api import DQInterface
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'Macrosynergy/DataQueryInterface'
+project = "Macrosynergy's DataQueryInterface"
 copyright = '2024, Macrosynergy'
 author = 'Macrosynergy'
 
@@ -40,4 +40,5 @@ extensions = [
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = 'furo'
+
 html_static_path = ['_static']

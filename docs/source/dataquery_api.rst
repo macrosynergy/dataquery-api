@@ -1,5 +1,5 @@
-dataquery_api documentation
-===========================
+Script Documentation
+================
 
 .. automodule:: dataquery_api
     :members:

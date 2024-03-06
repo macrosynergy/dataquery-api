@@ -102,7 +102,7 @@ def construct_jpmaqs_expressions(
 def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
     """
     Convert a list of timeseries dictionaries/JSONs to a pandas DataFrame.
-    Parameters
+
     :param dicts_list <list>: List of dictionaries containing time series
         data from the DataQuery API
     Returns
@@ -136,10 +136,10 @@ def request_wrapper(
     """
     Wrapper function for requests.request() used to make a request
     to the JPMorgan DataQuery API.
-    Parameters
+
     :param url <str>: URL to make request to
     :param params <dict>: Parameters to pass to request
-    Returns
+
     :return <requests.Response>: Response object
     """
     # this function wraps the requests.request() method in a try/except block
@@ -226,7 +226,8 @@ class DQInterface:
     def _request(self, url: str, params: dict, **kwargs) -> requests.Response:
         """
         Helper function to make a request to the DataQuery API.
-        Parameters
+
+
         :param url <str>: URL to make request to
         :param params <dict>: Parameters to pass to request
         Returns
@@ -292,6 +293,8 @@ class DQInterface:
                 f"URL: {form_full_url(url, params)}"
                 f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
             )
+        if kwargs.pop("show_progress_catalogue", False):
+            print(".", end="", flush=True)
 
         downloaded_data.extend(response["instruments"])
 
@@ -300,6 +303,7 @@ class DQInterface:
                 self._fetch(
                     url=self.base_url + response["links"][1]["next"],
                     params={},
+                    **kwargs,
                 )
             )
 
@@ -309,6 +313,7 @@ class DQInterface:
         self,
         group_id: str = JPMAQS_GROUP_ID,
         verbose: bool = True,
+        show_progress: bool = True,
     ) -> List[str]:
         """
         Method to get the JPMaQS catalogue.
@@ -328,7 +333,10 @@ class DQInterface:
             response_list: Dict = self._fetch(
                 url=self.base_url + CATALOGUE_ENDPOINT,
                 params={"group-id": group_id},
+                show_progress_catalogue=show_progress,
             )
+            if show_progress:
+                print()
         except Exception as e:
             raise e
 
@@ -348,7 +356,8 @@ class DQInterface:
     def _save_csvs(self, timeseries_list: List[Dict], save_to_path: str) -> List[str]:
         """
         Save the downloaded timeseries data to a file.
-        Parameters
+
+
         :param timeseries_list <list>: List of dictionaries containing data
         :param path <str>: Path to save the file to
         """
@@ -384,7 +393,8 @@ class DQInterface:
     ) -> List[Dict]:
         """
         Download data from the DataQuery API.
-        Parameters
+
+
         :param expressions <list>: List of expressions to download
         :param params <dict>: Dictionary of parameters to pass to the request
         Returns
@@ -483,8 +493,6 @@ class DQInterface:
         """
         Download data from the DataQuery API.
 
-        Parameters
-
         :param expressions <List[str]>: List of expressions to download.
         :param start_date <str>: Start date of data to download.
         :param end_date <str>: End date of data to download.
@@ -569,6 +577,20 @@ class DQInterface:
         return downloaded_data
 
 
+def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = None):
+    """
+    Test the DataQuery API heartbeat.
+
+    :param client_id <str>: Client ID for the DataQuery API.
+    :param client_secret <str>: Client secret for the DataQuery API.
+    :param proxy <dict>: Dictionary containing the proxy settings.
+
+    :return <bool>: True if the heartbeat is successful, False otherwise.
+    """
+    with DQInterface(client_id, client_secret, proxy) as dq:
+        return dq.heartbeat()
+
+
 def download_all_jpmaqs_to_disk(
     client_id: str,
     client_secret: str,
@@ -579,7 +601,7 @@ def download_all_jpmaqs_to_disk(
 ):
     """
     Download all JPMaQS data to disk.
-    Parameters
+
 
     :param client_id <str>: Client ID for the DataQuery API.
     :param client_secret <str>: Client secret for the DataQuery API.
