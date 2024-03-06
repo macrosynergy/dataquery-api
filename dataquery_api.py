@@ -1,27 +1,32 @@
-"""A Python wrapper for the JPMorgan DataQuery API.
+"""
+A Python wrapper for the JPMorgan DataQuery API.
+
 This script is meant as a guide to using the JPMorgan DataQuery API.
+
 This module does not contain any error handling, and will break if any errors are raised.
+
 For JPMaQS specific functionality, see the :
 
-- [Macrosynergy package documentations](https://macrosynergy.readthedocs.io/)
+- `Macrosynergy package documentation <https://macrosynergy.readthedocs.io/>`_.
 
-- [`macrosynergy.download` documentation](https://macrosynergy.readthedocs.io/stable/macrosynergy).
+- `macrosynergy.download documentation. <https://macrosynergy.readthedocs.io/stable/macrosynergy.download.html>`_.
 
-- [Macrosynergy package on GitHub](https://macrosynergy.readthedocs.io/stable/macrosynergy.download.html).
+- `Macrosynergy package on GitHub <https://github.com/macrosynergy/macrosynergy>`_.
 
 """
 
 try:
     import concurrent.futures
+    import logging
+    import os
     from datetime import datetime as datetime
     from datetime import timedelta, timezone
     from time import sleep
-    from typing import Dict, List, Optional, Union, overload, Generator
-    import os
+    from typing import Dict, Generator, Iterable, List, Optional, Union, overload
+
     import pandas as pd
     import requests
     import requests.compat
-    import logging
     from tqdm import tqdm
 except ImportError as e:
     print(f"Import Error: {e}")
@@ -340,7 +345,7 @@ class DQInterface:
 
         return tickers
 
-    def _save_csvs(self, timeseries_list: List[Dict], save_to_path: str) -> List[bool]:
+    def _save_csvs(self, timeseries_list: List[Dict], save_to_path: str) -> List[str]:
         """
         Save the downloaded timeseries data to a file.
         Parameters
@@ -348,19 +353,22 @@ class DQInterface:
         :param path <str>: Path to save the file to
         """
         assert os.path.exists(save_to_path), f"Path {save_to_path} does not exist."
-        expressions = [d["attributes"][0]["expression"] for d in timeseries_list]
         results = []
         while len(timeseries_list) > 0:
-            expr = timeseries_list[0]["attributes"][0]["expression"]
+            ts = timeseries_list.pop(0)
+            if ts["attributes"][0]["time-series"] is None:
+                continue
+            expr = ts["attributes"][0]["expression"]
             pth = os.path.join(save_to_path, f"{expr}.csv")
             (
-                time_series_to_df(timeseries_list.pop(0))
-                .drop(columns=["expression"])
+                pd.DataFrame(
+                    ts["attributes"][0]["time-series"],
+                    columns=["real_date", "value"],
+                )
                 .dropna()
-                .reset_index(drop=True)
                 .to_csv(pth, index=False)
             )
-            results.append(os.path.exists(pth))
+            results.append(pth)
 
         return results
 
@@ -398,7 +406,11 @@ class DQInterface:
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures: List[concurrent.futures.Future] = []
-            for expr_batch in tqdm(expr_batches, desc="Requesting data"):
+            for expr_batch in tqdm(
+                expr_batches,
+                desc="Requesting data",
+                disable=not show_progress,
+            ):
                 current_params: Dict = params.copy()
                 current_params["expressions"] = expr_batch
                 curr_url: str = self.base_url + TIMESERIES_ENDPOINT
@@ -409,7 +421,11 @@ class DQInterface:
                         params=current_params,
                     )
                 )
-            for ix, future in enumerate(futures):
+            for ix, future in tqdm(
+                enumerate(futures),
+                desc="Downloading data",
+                disable=not show_progress,
+            ):
                 try:
                     result = future.result()
                     if save_to_path is not None:
@@ -463,23 +479,23 @@ class DQInterface:
         frequency: str = "FREQ_DAY",
         conversion: str = "CONV_LASTBUS_ABS",
         nan_treatment: str = "NA_NOTHING",
-    ) -> Union[List[Dict], pd.DataFrame]:
+    ) -> Union[List[Dict], List[str], pd.DataFrame]:
         """
         Download data from the DataQuery API.
+
         Parameters
-        :param expressions <list>: List of expressions to download
-        :param start_date <str>: Start date of data to download
-        :param end_date <str>: End date of data to download
+
+        :param expressions <List[str]>: List of expressions to download.
+        :param start_date <str>: Start date of data to download.
+        :param end_date <str>: End date of data to download.
         :param as_dataframe <bool>: Whether to return the data as a Pandas DataFrame,
             or as a list of dictionaries. Defaults to True, returning a DataFrame.
         :param show_progress <bool>: Whether to show a progress bar for the download.
-        :param calender <str>: Calendar setting from DataQuery's specifications
-        :param frequency <str>: Frequency setting from DataQuery's specifications
-        :param conversion <str>: Conversion setting from DataQuery's specifications
-        :param nan_treatment <str>: NaN treatment setting from DataQuery's specifications
-        :param run_sequential <bool>: Whether to run the download
-            sequentially or as multithreaded requests.
-            Defaults to False (multithreaded recommended).
+        :param calender <str>: Calendar setting from DataQuery's specifications.
+        :param frequency <str>: Frequency setting from DataQuery's specifications.
+        :param conversion <str>: Conversion setting from DataQuery's specifications.
+        :param nan_treatment <str>: NaN treatment setting from DataQuery's specifications.
+
         Returns
         :return <list>: List of dictionaries containing data
         """
@@ -497,27 +513,91 @@ class DQInterface:
             "nan_treatment": nan_treatment,
             "data": "NO_REFERENCE_DATA",
         }
-        downloaded_data: Union[List[Dict], List[bool], pd.DataFrame] = (
-            self._get_timeseries(
-                expressions=expressions,
-                params=params_dict,
-                as_dataframe=as_dataframe,
-                save_to_path=save_to_path,
-                show_progress=show_progress,
-            )
+        downloaded_data: Union[List[Dict], List[str]] = self._get_timeseries(
+            expressions=expressions,
+            params=params_dict,
+            as_dataframe=as_dataframe,
+            save_to_path=save_to_path,
+            show_progress=show_progress,
         )
         print(
             f"Download done."
             f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
         )
         if save_to_path:
+            assert all(isinstance(f, str) for f in downloaded_data)
             print(f"Data saved to {save_to_path}.")
-            print(f"Downloaded {sum(downloaded_data)}/{len(downloaded_data)} files.")
-            return
+            print(f"Downloaded {len(downloaded_data)} / {len(expressions)} files.")
+            result = [
+                {
+                    str(os.path.basename(f)).split(".")[0]: os.path.abspath(
+                        os.path.normpath(f)
+                    )
+                }
+                for f in downloaded_data
+            ]
+            logger.info(f"Data saved to {save_to_path}.")
+            logger.info(f"Saved files: {result}")
+            return result
+
+        mismm = "Expression not found; No message available."
+        missing_exprs = [
+            (
+                expr["attributes"][0]["expression"],
+                expr["attributes"][0].get("message", mismm),
+            )
+            for expr in downloaded_data
+            if expr["attributes"][0]["time-series"] is None
+        ]
+
+        if len(missing_exprs) > 0:
+            logger.warning(f"Missing expressions: {missing_exprs}")
+            print(
+                f"Missing expressions: {missing_exprs}\n"
+                f"Downloaded {len(downloaded_data) - len(missing_exprs)}"
+                f" / {len(expressions)} expressions."
+            )
+            downloaded_data = [
+                expr
+                for expr in downloaded_data
+                if expr["attributes"][0]["time-series"] is not None
+            ]
+
         if as_dataframe:
             return time_series_to_df(downloaded_data)
-        else:
-            return downloaded_data
+
+        return downloaded_data
+
+
+def download_all_jpmaqs_to_disk(
+    client_id: str,
+    client_secret: str,
+    path="./data",
+    show_progress: bool = False,
+    start_date: str = "1990-01-01",
+    end_date: Optional[str] = None,
+):
+    """
+    Download all JPMaQS data to disk.
+    Parameters
+
+    :param client_id <str>: Client ID for the DataQuery API.
+    :param client_secret <str>: Client secret for the DataQuery API.
+    :param path <str>: Path to save the data to.
+    :param start_date <str>: Start date of data to download.
+    :param end_date <str>: End date of data to download.
+    """
+    with DQInterface(client_id, client_secret) as dq:
+        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
+        tickers = dq.get_catalogue()
+        expressions = construct_jpmaqs_expressions(tickers)
+        data: pd.DataFrame = dq.download(
+            expressions=expressions,
+            start_date=start_date,
+            end_date=end_date,
+            save_to_path=path,
+            show_progress=show_progress,
+        )
 
 
 if __name__ == "__main__":
@@ -550,7 +630,14 @@ if __name__ == "__main__":
             save_to_path="./data",
         )
 
-    if isinstance(data, pd.DataFrame):
-        print(data.head())
-    else:
-        print(data[: min(5, len(data))])
+        assert isinstance(data, Iterable)
+
+        for ix in range(5):
+            print(data[ix])
+
+    download_all_jpmaqs_to_disk(
+        client_id,
+        client_secret,
+        path="./data/JPMAQS",
+        show_progress=True,
+    )
