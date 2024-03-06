@@ -19,9 +19,10 @@ try:
     import concurrent.futures
     import logging
     import os
+    import json
     from datetime import datetime as datetime
     from datetime import timedelta, timezone
-    from time import sleep
+    import time
     from typing import Dict, Generator, Iterable, List, Optional, Union, overload
 
     import pandas as pd
@@ -431,6 +432,7 @@ class DQInterface:
                         params=current_params,
                     )
                 )
+                time.sleep(API_DELAY_PARAM)
             for ix, future in tqdm(
                 enumerate(futures),
                 desc="Downloading data",
@@ -484,7 +486,7 @@ class DQInterface:
         end_date: str,
         as_dataframe: bool = True,
         save_to_path: Optional[str] = None,
-        show_progress: bool = True,
+        show_progress: bool = False,
         calender: str = "CAL_WEEKDAYS",
         frequency: str = "FREQ_DAY",
         conversion: str = "CONV_LASTBUS_ABS",
@@ -494,22 +496,32 @@ class DQInterface:
         Download data from the DataQuery API.
 
         :param expressions <List[str]>: List of expressions to download.
-        :param start_date <str>: Start date of data to download.
-        :param end_date <str>: End date of data to download.
+        :param start_date <str>: Start date of data to download (format: "YYYY-MM-DD").
+            Defaults to "1990-01-01".
+        :param end_date <Optional[str]>: End date of data to download
+            (format: "YYYY-MM-DD"). Defaults to ``None``.
         :param as_dataframe <bool>: Whether to return the data as a Pandas DataFrame,
             or as a list of dictionaries. Defaults to True, returning a DataFrame.
         :param show_progress <bool>: Whether to show a progress bar for the download.
+            Defaults to False.
         :param calender <str>: Calendar setting from DataQuery's specifications.
         :param frequency <str>: Frequency setting from DataQuery's specifications.
         :param conversion <str>: Conversion setting from DataQuery's specifications.
         :param nan_treatment <str>: NaN treatment setting from DataQuery's specifications.
 
-        Returns
-        :return <list>: List of dictionaries containing data
+        :return <Union[List[Dict], List[str], pd.DataFrame]>:
+            - List of dictionaries (if as_dataframe=False).
+            - List of dictionaries containing file paths in the form ``{expression:file}``
+                (if save_to_path is not provided).
+            - Pandas DataFrame with columns ["real_date", "expression", "value"]
+                (if as_dataframe=True, default).
         """
         if save_to_path is not None:
             save_to_path = os.path.expanduser(save_to_path)
             os.makedirs(os.path.normpath(save_to_path), exist_ok=True)
+
+        if end_date is None:
+            end_date = datetime.now(timezone.utc).isoformat()
 
         params_dict: Dict = {
             "format": "JSON",
@@ -577,6 +589,35 @@ class DQInterface:
         return downloaded_data
 
 
+def example_usage(client_id: str, client_secret: str):
+    """
+    Example usage of the DQInterface class.
+    Click "[source]" to see the code.
+    """
+    expressions = [
+        "DB(CFX,USD,)",
+        "DB(CFX,AUD,)",
+        "DB(CFX,GBP,)",
+        "DB(JPMAQS,USD_EQXR_VT10,value)",
+        "DB(JPMAQS,EUR_EQXR_VT10,value)",
+        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
+        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,grading)",
+        "DB(JPMAQS,GBP_EXALLOPENNESS_NSA_1YMA,eop_lag)",
+        "DB(JPMAQS,GBP_EXALLOPENNESS_NSA_1YMA,mop_lag)",
+    ]
+
+    with DQInterface(client_id, client_secret) as dq:
+        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
+        data: pd.DataFrame = dq.download(
+            expressions=expressions,
+            start_date="2023-02-20",
+            end_date="2023-03-01",
+        )
+
+        assert isinstance(data, pd.DataFrame)
+        print(data.head(20))
+
+
 def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = None):
     """
     Test the DataQuery API heartbeat.
@@ -587,13 +628,29 @@ def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = N
 
     :return <bool>: True if the heartbeat is successful, False otherwise.
     """
+
     with DQInterface(client_id, client_secret, proxy) as dq:
-        return dq.heartbeat()
+        start = time.time()
+        hb = dq.heartbeat()
+        end = time.time()
+        if not hb:
+            print(
+                f"Connection to DataQuery API failed."
+                "Retrying and logging printing error to stdout."
+            )
+            start = time.time()
+            dq.heartbeat(raise_error=True)
+            end = time.time()
+
+        if hb:
+            print(f"Connection to DataQuery API")
+            print(f"Authentication + Heartbeat took {end - start:.2f} seconds.")
 
 
 def download_all_jpmaqs_to_disk(
     client_id: str,
     client_secret: str,
+    proxy: Optional[Dict] = None,
     path="./data",
     show_progress: bool = False,
     start_date: str = "1990-01-01",
@@ -609,7 +666,11 @@ def download_all_jpmaqs_to_disk(
     :param start_date <str>: Start date of data to download.
     :param end_date <str>: End date of data to download.
     """
-    with DQInterface(client_id, client_secret) as dq:
+    with DQInterface(
+        client_id=client_id,
+        client_secret=client_secret,
+        proxy=proxy,
+    ) as dq:
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
         tickers = dq.get_catalogue()
         expressions = construct_jpmaqs_expressions(tickers)
@@ -622,44 +683,98 @@ def download_all_jpmaqs_to_disk(
         )
 
 
-if __name__ == "__main__":
-    import os
+def get_credentials(file: str) -> Dict:
+    """
+    Get the credentials from a JSON file.
 
-    client_id: str = os.getenv("DQ_CLIENT_ID")
-    client_secret: str = os.getenv("DQ_CLIENT_SECRET")
+    :param file <str>: Path to the credentials JSON file.
 
-    expressions = [
-        "DB(CFX,USD,)",
-        "DB(CFX,AUD,)",
-        "DB(CFX,GBP,)",
-        "DB(JPMAQS,USD_EQXR_VT10,value)",
-        "DB(JPMAQS,EUR_EQXR_VT10,value)",
-        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
-        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,grading)",
-        "DB(JPMAQS,GBP_EXALLOPENNESS_NSA_1YMA,eop_lag)",
-        "DB(JPMAQS,GBP_EXALLOPENNESS_NSA_1YMA,mop_lag)",
-    ]
+    :return <dict>: Dictionary containing the credentials.
+    """
+    emsg = "`{cred}` not found in the credentials file ('" + file + "')."
+    cks = ["client_id", "client_secret"]
+    with open(file, "r") as f:
+        res: dict = json.load(f)
+        for ck in cks:
+            if ck not in res.keys():
+                raise ValueError(emsg.format(cred=ck))
+        if not isinstance(res.get("proxy", {}), dict):
+            raise ValueError("`proxy` must be a dictionary.")
 
-    start_date: str = "2020-01-25"
-    end_date: str = "2023-02-05"
+        res = {res.get(a, None) for a in cks + ["proxy"]}
 
-    with DQInterface(client_id, client_secret) as dq:
-        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
-        data: pd.DataFrame = dq.download(
-            expressions=expressions,
-            start_date=start_date,
-            end_date=end_date,
-            save_to_path="./data",
-        )
+        return res
 
-        assert isinstance(data, Iterable)
 
-        for ix in range(5):
-            print(data[ix])
+def cli():
+    """
+    CLI Arguments to download JPMaQS data.
 
-    download_all_jpmaqs_to_disk(
-        client_id,
-        client_secret,
-        path="./data/JPMAQS",
-        show_progress=True,
+    Usage:
+
+    .. code-block:: bash
+
+        python dataquery_api.py --credentials <path_to_credentials> --path <path_to_save_data> --progress <bool>
+
+    Your credentials file should look like this (proxy is optional):
+
+    .. code-block:: python
+
+        {
+            "client_id": "your_client_id",
+            "client_secret": "your_client_secret"
+            "proxy": {
+                "https": "https://your_proxy:port",
+                }
+        }
+
+    :param credentials <str>: Path to the credentials JSON (``--credentials``).
+    :param path <str>: Path to save the data to (``--path``). If not provided, only a few
+        timeseries will be downloaded as a DataFrame and printed. This is only for testing.
+    :param progress <bool>: Whether to show a progress bar for the download (``--progress``).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Download JPMaQS data.")
+
+    parser.add_argument(
+        "--credentials",
+        type=str,
+        help="Path to the credentials JSON.",
+        required=True,
     )
+    parser.add_argument(
+        "--path",
+        type=str,
+        help="Path to save the data to.",
+        required=False,
+    )
+
+    parser.add_argument(
+        "--heartbeat",
+        type=bool,
+        help="Test the DataQuery API heartbeat.",
+        required=False,
+    )
+
+    parser.add_argument(
+        "--progress",
+        type=bool,
+        help="Whether to show a progress bar for the download.",
+        required=False,
+    )
+
+    args = parser.parse_args()
+    creds = get_credentials(args.credentials)
+
+    if args.heartbeat:
+        print(heartbeat_test(*creds))
+
+    if args.path is None:
+        example_usage(*creds)
+    else:
+        download_all_jpmaqs_to_disk(*creds, path=args.path, show_progress=args.progress)
+
+
+if __name__ == "__main__":
+    cli()
