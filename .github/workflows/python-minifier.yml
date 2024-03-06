@@ -1,0 +1,58 @@
+name: Run python-minifier
+
+on:
+  push:
+    branches: ["main", "develop", "minify"]
+
+  workflow_dispatch:
+
+# Sets permissions to allow the bot to push to the repository
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  minify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install python-minifier
+
+
+      - name: Minify - Regular
+        run: |
+          mkdir -p minified
+          pyminify -o minified/dq_api_mr.py \
+          --remove-literal-statements \
+          --no-hoist-literals \
+          --no-rename-locals \
+          dataquery_api.py
+
+      - name: Minify - Extreme
+        run: |
+          mkdir -p minified
+          pyminify -o minified/dq_api_mx.py \
+          --remove-literal-statements \
+          --rename-globals \
+          dataquery_api.py
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and Push
+        run: |
+          git add .
+          git commit -m "Automation: minify dataquery_api.py"
+          # The following line prevents the action from failing if there are no changes to commit
+          git push || echo "No changes to commit"
