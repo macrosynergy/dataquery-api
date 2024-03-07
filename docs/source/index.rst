@@ -4,15 +4,25 @@
    contain the root `toctree` directive.
 
 dataquery-api
-=================================
+=============
 
 .. toctree::
    :maxdepth: 1
+   :hidden:
    :caption: Contents:
 
    getting_started
 
    dataquery_api
+
+.. toctree::
+   :hidden:
+   :maxdepth: 2
+   :caption: Links:
+
+   GitHub Repo <https://github.com/macrosynergy/dataquery-api>
+   Macrosynergy's GitHub <https://github.com/macrosynergy>
+
 
 
 .. include:: ../../README.md
