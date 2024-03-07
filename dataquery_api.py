@@ -96,7 +96,7 @@ def construct_jpmaqs_expressions(
     """
     if isinstance(ticker, str):
         return [f"DB(JPMAQS,{ticker},{metric})" for metric in metrics]
-
+    assert isinstance(ticker, list), "ticker must be a string or a list of strings."
     return [f"DB(JPMAQS,{t},{metric})" for t in ticker for metric in metrics]
 
 
@@ -277,7 +277,7 @@ class DQInterface:
 
         return result
 
-    def _fetch(self, url: str, params: dict, **kwargs) -> requests.Response:
+    def _fetch(self, url: str, params: dict, **kwargs) -> List[Dict]:
         downloaded_data: List[Dict] = []
         response: Dict = self._request(url=url, params=params, **kwargs)
 
@@ -358,15 +358,28 @@ class DQInterface:
 
         return tickers
 
-    def _save_csvs(self, timeseries_list: List[Dict], save_to_path: str) -> List[str]:
+    def _get_result(
+        self,
+        url: str,
+        params: dict,
+        save_to_path: str,
+        **kwargs,
+    ) -> List[str]:
         """
-        Save the downloaded timeseries data to a file.
+        Save the downloaded timeseries data to a file or return it as a list of dictionaries.
 
-
-        :param timeseries_list <list>: List of dictionaries containing data
-        :param path <str>: Path to save the file to
+        :param url <str>: URL to make request to.
+        :param params <dict>: Parameters to pass to request.
+        :param save_to_path <str>: Path to save the file to.
         """
-        assert os.path.exists(save_to_path), f"Path {save_to_path} does not exist."
+
+        timeseries_list = self._fetch(url, params, **kwargs)
+        if save_to_path is None:
+            return timeseries_list
+
+        if not os.path.exists(save_to_path):
+            os.makedirs(save_to_path, exist_ok=True)
+
         results = []
         while len(timeseries_list) > 0:
             ts = timeseries_list.pop(0)
@@ -419,7 +432,7 @@ class DQInterface:
             print(f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}")
             print("Connected to DataQuery API!")
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             futures: List[concurrent.futures.Future] = []
             for expr_batch in tqdm(
                 expr_batches,
@@ -431,9 +444,10 @@ class DQInterface:
                 curr_url: str = self.base_url + TIMESERIES_ENDPOINT
                 futures.append(
                     executor.submit(
-                        self._fetch,
+                        self._get_result,
                         url=curr_url,
                         params=current_params,
+                        save_to_path=save_to_path,
                     )
                 )
                 time.sleep(API_DELAY_PARAM)
@@ -445,7 +459,6 @@ class DQInterface:
                 try:
                     result = future.result()
                     if save_to_path is not None:
-                        result = self._save_csvs(result, save_to_path)
                         if not all(result):
                             raise Exception(
                                 f"Failed to save data to path `{save_to_path}` for batch {ix}."
@@ -489,7 +502,7 @@ class DQInterface:
         start_date: str,
         end_date: str,
         as_dataframe: bool = True,
-        save_to_path: Optional[str] = None,
+        path: Optional[str] = None,
         show_progress: bool = False,
         calender: str = "CAL_WEEKDAYS",
         frequency: str = "FREQ_DAY",
@@ -520,12 +533,12 @@ class DQInterface:
             - Pandas DataFrame with columns ["real_date", "expression", "value"]
                 (if as_dataframe=True, default).
         """
-        if save_to_path is not None:
-            save_to_path = os.path.expanduser(save_to_path)
-            os.makedirs(os.path.normpath(save_to_path), exist_ok=True)
+        if path is not None:
+            path = os.path.expanduser(path)
+            os.makedirs(os.path.normpath(path), exist_ok=True)
 
         if end_date is None:
-            end_date = datetime.now(timezone.utc).isoformat()
+            end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         params_dict: Dict = {
             "format": "JSON",
@@ -541,16 +554,16 @@ class DQInterface:
             expressions=expressions,
             params=params_dict,
             as_dataframe=as_dataframe,
-            save_to_path=save_to_path,
+            save_to_path=path,
             show_progress=show_progress,
         )
         print(
             f"Download done."
             f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
         )
-        if save_to_path:
+        if path:
             assert all(isinstance(f, str) for f in downloaded_data)
-            print(f"Data saved to {save_to_path}.")
+            print(f"Data saved to {path}.")
             print(f"Downloaded {len(downloaded_data)} / {len(expressions)} files.")
             result = [
                 {
@@ -560,7 +573,7 @@ class DQInterface:
                 }
                 for f in downloaded_data
             ]
-            logger.info(f"Data saved to {save_to_path}.")
+            logger.info(f"Data saved to {path}.")
             logger.info(f"Saved files: {result}")
             return result
 
@@ -605,13 +618,19 @@ def download_all_jpmaqs_to_disk(
     """
     Download all JPMaQS data to disk.
 
-
     :param client_id <str>: Client ID for the DataQuery API.
     :param client_secret <str>: Client secret for the DataQuery API.
     :param path <str>: Path to save the data to.
     :param start_date <str>: Start date of data to download.
     :param end_date <str>: End date of data to download.
     """
+    if not isinstance(path, str):
+        raise ValueError("`path` must be a string.")
+
+    path = os.path.join(path, "JPMaQSDATA").replace("\\", "/")
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+
     data: List[Dict[str, str]] = []  # [{expression:file}, {expression:file}, ...]
     with DQInterface(
         client_id=client_id,
@@ -625,7 +644,7 @@ def download_all_jpmaqs_to_disk(
             expressions=expressions,
             start_date=start_date,
             end_date=end_date,
-            save_to_path=path,
+            path=path,
             show_progress=show_progress,
         )
 
@@ -639,7 +658,9 @@ def download_all_jpmaqs_to_disk(
 # CLI and example usage
 
 
-def example_usage(client_id: str, client_secret: str, proxy: Optional[Dict] = None):
+def example_usage(
+    client_id: str, client_secret: str, proxy: Optional[Dict] = None, test_path=None
+):
     """
     Example usage of the DQInterface class.
     Click "[source]" to see the code.
@@ -666,10 +687,12 @@ def example_usage(client_id: str, client_secret: str, proxy: Optional[Dict] = No
             expressions=expressions,
             start_date="2023-02-20",
             end_date="2023-03-01",
+            path=test_path,
         )
 
-        assert isinstance(data, pd.DataFrame)
-        print(data.head(20))
+        if not test_path:
+            assert isinstance(data, pd.DataFrame)
+            print(data.head(20))
 
 
 def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = None):
@@ -769,6 +792,15 @@ def cli():
         type=str,
         help="Path to save the data to.",
         required=False,
+        default="~/tickers/",
+    )
+
+    parser.add_argument(
+        "--test-path",
+        type=str,
+        help="Path to save the data to, for testing functionality.",
+        required=False,
+        default=None,
     )
 
     parser.add_argument(
@@ -784,6 +816,7 @@ def cli():
         action="store_true",
         help="Whether to show a progress bar for the download.",
         required=False,
+        default=True,
     )
 
     args = parser.parse_args()
@@ -794,7 +827,7 @@ def cli():
         return
 
     if args.path is None:
-        example_usage(**creds)
+        example_usage(**creds, test_path=args.test_path)
     else:
         download_all_jpmaqs_to_disk(
             **creds, path=args.path, show_progress=args.progress
