@@ -50,6 +50,8 @@ jobs:
 
       - name: Commit and Push
         run: |
+          # if there is no diff, exit without error
+          git diff --exit-code || exit 0
           git add .
           git commit -m "Automation: minify dataquery_api.py"
           # The following line prevents the action from failing if there are no changes to commit
