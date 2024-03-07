@@ -430,9 +430,6 @@ class DQInterface:
 
         downloaded_data: List[Union[Dict, pd.DataFrame]] = []
         failed_batches: List[List[str]] = []
-        if self.heartbeat(raise_error=True):
-            print(f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}")
-            print("Connected to DataQuery API!")
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures: List[concurrent.futures.Future] = []
@@ -555,6 +552,11 @@ class DQInterface:
             "nan_treatment": nan_treatment,
             "data": "NO_REFERENCE_DATA",
         }
+        dwnld_start = time.time()
+        if self.heartbeat(raise_error=True):
+            print(f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}")
+            print("Connected to DataQuery API!")
+
         downloaded_data: Union[List[Dict], List[str]] = self._get_timeseries(
             expressions=expressions,
             params=params_dict,
@@ -562,9 +564,11 @@ class DQInterface:
             save_to_path=path,
             show_progress=show_progress,
         )
+        dwnld_end = time.time()
         print(
-            f"Download done."
-            f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
+            f"Download done.\n"
+            f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}.\n"
+            f"Download took {dwnld_end - dwnld_start:.2f} seconds."
         )
         if path:
             assert all(isinstance(f, str) for f in downloaded_data)
@@ -612,6 +616,66 @@ class DQInterface:
         return downloaded_data
 
 
+def concat_csvs_to_df(
+    real_date="real_date",
+    df_paths: List[str] = [],
+    metrics: List[str] = [],
+    path=str,
+) -> pd.DataFrame:
+
+    (
+        functools.reduce(
+            lambda x, y: pd.merge(x, y, on=real_date, how="outer"),
+            [
+                pd.read_csv(f, parse_dates=[real_date])
+                .rename(columns={"value": metric})
+                .set_index(real_date)
+                for f, metric in zip(df_paths, metrics)
+            ],
+        )
+        .sort_values(by=real_date)
+        .reset_index()
+        .to_csv(path, index=False)
+    )
+
+
+def cleanup_csvs(path: str, expressions_paths: List[Dict[str, str]]) -> None:
+    splitexpr = lambda s: str(s).replace("DB(JPMAQS,", "").replace(")", "").split(",")
+    getticker = lambda s: splitexpr(s)[0]
+    getmetric = lambda s: splitexpr(s)[1]
+    getcid = lambda s: getticker(s).split("_")[0]
+    getxcat = lambda s: getticker(s).split("_", 1)[1]
+    all_expr_for_ticker = lambda t: list(
+        filter(lambda d: getticker(d["expression"]) == t, expressions_paths)
+    )
+    tickers_all: List[str] = list(
+        set([getticker(d["expression"]) for d in expressions_paths])
+    )
+
+    for ticker in tqdm(tickers_all, desc="Formatting CSVs"):
+        xc_path = os.path.join(path, getxcat(ticker))
+        os.makedirs(xc_path, exist_ok=True)
+        exprs = all_expr_for_ticker(ticker)
+        if len(exprs) == 0:
+            continue
+        df_paths = [d["file"] for d in exprs]
+        metrics = [getmetric(d["expression"]) for d in exprs]
+        ticker_path = os.path.join(xc_path, f"{ticker}.csv")
+        functools.reduce(
+            lambda x, y: pd.merge(x, y, on="real_date", how="outer"),
+            [
+                pd.read_csv(f, parse_dates=["real_date"])
+                .rename(columns={"value": metric})
+                .set_index("real_date")
+                for f, metric in zip(df_paths, metrics)
+            ],
+        ).sort_values(by="real_date").reset_index().to_csv(ticker_path, index=False)
+
+        # Remove the individual files
+        for f in df_paths:
+            os.remove(f)
+
+
 def download_all_jpmaqs_to_disk(
     client_id: str,
     client_secret: str,
@@ -633,11 +697,12 @@ def download_all_jpmaqs_to_disk(
     if not isinstance(path, str):
         raise ValueError("`path` must be a string.")
 
-    path = os.path.join(path, "JPMaQSDATA").replace("\\", "/")
+    path = os.path.join(os.path.expanduser(path), "JPMaQSDATA").replace("\\", "/")
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
 
     data: List[Dict[str, str]] = []  # [{expression:file}, {expression:file}, ...]
+    tickers = []
     with DQInterface(
         client_id=client_id,
         client_secret=client_secret,
@@ -646,7 +711,7 @@ def download_all_jpmaqs_to_disk(
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
         tickers = dq.get_catalogue()
         expressions = construct_jpmaqs_expressions(tickers)
-        data: pd.DataFrame = dq.download(
+        data: List[Dict] = dq.download(
             expressions=expressions,
             start_date=start_date,
             end_date=end_date,
@@ -654,11 +719,22 @@ def download_all_jpmaqs_to_disk(
             show_progress=show_progress,
         )
 
-    for dx in data:
-        if not os.path.exists(dx["file"]):
-            raise FileNotFoundError(
-                f"File {dx['file']} for expression {dx['expression']} not found."
+    rmexpr = lambda s: str(s).replace("DB(JPMAQS,", "").replace(")", "").split(",")[0]
+    downloaded_data = []
+    for d in data:
+        if os.path.exists(d["file"]):
+            downloaded_data.append(d)
+        else:
+            print(
+                "Error - File not found: "
+                f"Expression {d['expression']}, File {d['file']}"
             )
+    if len(downloaded_data) != len(data):
+        print("The following tickers will not have concatenated data:")
+        print(set(tickers) - set([rmexpr(d["expression"]) for d in downloaded_data]))
+
+    if len(downloaded_data) > 0:
+        cleanup_csvs(path, downloaded_data)
 
 
 # CLI and example usage
