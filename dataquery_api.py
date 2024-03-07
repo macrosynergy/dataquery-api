@@ -608,6 +608,7 @@ def download_all_jpmaqs_to_disk(
     :param start_date <str>: Start date of data to download.
     :param end_date <str>: End date of data to download.
     """
+    data: List[Dict[str, str]] = []  # [{expression:file}, {expression:file}, ...]
     with DQInterface(
         client_id=client_id,
         client_secret=client_secret,
@@ -624,7 +625,15 @@ def download_all_jpmaqs_to_disk(
             show_progress=show_progress,
         )
 
+    for dx in data:
+        if not os.path.exists(dx["file"]):
+            raise FileNotFoundError(
+                f"File {dx['file']} for expression {dx['expression']} not found."
+            )
+
+
 # CLI and example usage
+
 
 def example_usage(client_id: str, client_secret: str):
     """
@@ -682,9 +691,6 @@ def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = N
         if hb:
             print(f"Connection to DataQuery API")
             print(f"Authentication + Heartbeat took {end - start:.2f} seconds.")
-
-
-
 
 
 def get_credentials(file: str) -> Dict:
@@ -773,8 +779,6 @@ def cli():
     path = args.path
     heartbeat = args.heartbeat
     progress = args.progress
-
-
 
     if args.heartbeat:
         print(heartbeat_test(*creds))
