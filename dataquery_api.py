@@ -294,8 +294,6 @@ class DQInterface:
                 f"URL: {form_full_url(url, params)}"
                 f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
             )
-        if kwargs.pop("show_progress_catalogue", False):
-            print(".", end="", flush=True)
 
         downloaded_data.extend(response["instruments"])
 
@@ -334,7 +332,6 @@ class DQInterface:
             response_list: Dict = self._fetch(
                 url=self.base_url + CATALOGUE_ENDPOINT,
                 params={"group-id": group_id},
-                show_progress_catalogue=show_progress,
             )
             if show_progress:
                 print()
