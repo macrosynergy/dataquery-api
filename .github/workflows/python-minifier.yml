@@ -2,7 +2,7 @@ name: Run python-minifier
 
 on:
   push:
-    branches: ["main", "develop", "minify"]
+    branches: ["main", "develop"]
 
   workflow_dispatch:
 
