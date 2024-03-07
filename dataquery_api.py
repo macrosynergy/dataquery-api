@@ -152,7 +152,14 @@ def request_wrapper(
         if response.status_code == 200:
             return response
         else:
-            raise Exception(f"Request failed with status code {response.status_code}.")
+            raise Exception(
+                f"Request failed with status code {response.status_code}.\n"
+                f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}\n"
+                f"Response : {response.text}\n"
+                f"URL: {form_full_url(url, params)}"
+                f"Request headers: {headers}\n"
+            )
+
     except Exception as e:
         if isinstance(e, requests.exceptions.ProxyError):
             raise Exception("Proxy error. Check your proxy settings. Exception : ", e)
@@ -632,7 +639,7 @@ def download_all_jpmaqs_to_disk(
 # CLI and example usage
 
 
-def example_usage(client_id: str, client_secret: str):
+def example_usage(client_id: str, client_secret: str, proxy: Optional[Dict] = None):
     """
     Example usage of the DQInterface class.
     Click "[source]" to see the code.
@@ -649,7 +656,11 @@ def example_usage(client_id: str, client_secret: str):
         "DB(JPMAQS,GBP_EXALLOPENNESS_NSA_1YMA,mop_lag)",
     ]
 
-    with DQInterface(client_id, client_secret) as dq:
+    with DQInterface(
+        client_id=client_id,
+        client_secret=client_secret,
+        proxy=proxy,
+    ) as dq:
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
         data: pd.DataFrame = dq.download(
             expressions=expressions,
@@ -672,7 +683,9 @@ def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = N
     :return <bool>: True if the heartbeat is successful, False otherwise.
     """
 
-    with DQInterface(client_id, client_secret, proxy) as dq:
+    with DQInterface(
+        client_id=client_id, client_secret=client_secret, proxy=proxy
+    ) as dq:
         start = time.time()
         hb = dq.heartbeat()
         end = time.time()
@@ -708,7 +721,7 @@ def get_credentials(file: str) -> Dict:
         if not isinstance(res.get("proxy", {}), dict):
             raise ValueError("`proxy` must be a dictionary.")
 
-        res = {res.get(a, None) for a in cks + ["proxy"]}
+        res = {a: res[a] for a in (cks + ["proxy"]) if res.get(a, None) is not None}
 
         return res
 
@@ -748,7 +761,8 @@ def cli():
         "--credentials",
         type=str,
         help="Path to the credentials JSON.",
-        required=True,
+        # required=True,
+        default="credentials.json",
     )
     parser.add_argument(
         "--path",
@@ -759,31 +773,32 @@ def cli():
 
     parser.add_argument(
         "--heartbeat",
-        type=bool,
-        help="Test the DataQuery API heartbeat.",
+        action="store_true",
+        help="Test the DataQuery API heartbeat and exit.",
         required=False,
+        default=False,
     )
 
     parser.add_argument(
         "--progress",
-        type=bool,
+        action="store_true",
         help="Whether to show a progress bar for the download.",
         required=False,
     )
 
     args = parser.parse_args()
     creds = get_credentials(args.credentials)
-    path = args.path
-    heartbeat = args.heartbeat
-    progress = args.progress
 
+    heartbeat_test(**creds)
     if args.heartbeat:
-        print(heartbeat_test(*creds))
+        return
 
     if args.path is None:
-        example_usage(*creds)
+        example_usage(**creds)
     else:
-        download_all_jpmaqs_to_disk(*creds, path=args.path, show_progress=args.progress)
+        download_all_jpmaqs_to_disk(
+            **creds, path=args.path, show_progress=args.progress
+        )
 
 
 if __name__ == "__main__":
