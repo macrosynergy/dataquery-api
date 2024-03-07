@@ -75,14 +75,14 @@ def form_full_url(url: str, params: Dict = {}) -> str:
     )
 
 
-# @overload
-# def construct_jpmaqs_expressions(
-#     ticker: List[str], metrics: List[str]
-# ) -> List[str]: ...
+@overload
+def construct_jpmaqs_expressions(
+    ticker: List[str], metrics: List[str]
+) -> List[str]: ...
 
 
-# @overload
-# def construct_jpmaqs_expressions(ticker: str, metrics: List[str]) -> List[str]: ...
+@overload
+def construct_jpmaqs_expressions(ticker: str, metrics: List[str]) -> List[str]: ...
 
 
 def construct_jpmaqs_expressions(
