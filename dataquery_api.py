@@ -73,14 +73,14 @@ def form_full_url(url: str, params: Dict = {}) -> str:
     )
 
 
-@overload
-def construct_jpmaqs_expressions(
-    ticker: List[str], metrics: List[str]
-) -> List[str]: ...
+# @overload
+# def construct_jpmaqs_expressions(
+#     ticker: List[str], metrics: List[str]
+# ) -> List[str]: ...
 
 
-@overload
-def construct_jpmaqs_expressions(ticker: str, metrics: List[str]) -> List[str]: ...
+# @overload
+# def construct_jpmaqs_expressions(ticker: str, metrics: List[str]) -> List[str]: ...
 
 
 def construct_jpmaqs_expressions(
@@ -589,6 +589,43 @@ class DQInterface:
         return downloaded_data
 
 
+def download_all_jpmaqs_to_disk(
+    client_id: str,
+    client_secret: str,
+    proxy: Optional[Dict] = None,
+    path="./data",
+    show_progress: bool = False,
+    start_date: str = "1990-01-01",
+    end_date: Optional[str] = None,
+):
+    """
+    Download all JPMaQS data to disk.
+
+
+    :param client_id <str>: Client ID for the DataQuery API.
+    :param client_secret <str>: Client secret for the DataQuery API.
+    :param path <str>: Path to save the data to.
+    :param start_date <str>: Start date of data to download.
+    :param end_date <str>: End date of data to download.
+    """
+    with DQInterface(
+        client_id=client_id,
+        client_secret=client_secret,
+        proxy=proxy,
+    ) as dq:
+        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
+        tickers = dq.get_catalogue()
+        expressions = construct_jpmaqs_expressions(tickers)
+        data: pd.DataFrame = dq.download(
+            expressions=expressions,
+            start_date=start_date,
+            end_date=end_date,
+            save_to_path=path,
+            show_progress=show_progress,
+        )
+
+# CLI and example usage
+
 def example_usage(client_id: str, client_secret: str):
     """
     Example usage of the DQInterface class.
@@ -647,40 +684,7 @@ def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = N
             print(f"Authentication + Heartbeat took {end - start:.2f} seconds.")
 
 
-def download_all_jpmaqs_to_disk(
-    client_id: str,
-    client_secret: str,
-    proxy: Optional[Dict] = None,
-    path="./data",
-    show_progress: bool = False,
-    start_date: str = "1990-01-01",
-    end_date: Optional[str] = None,
-):
-    """
-    Download all JPMaQS data to disk.
 
-
-    :param client_id <str>: Client ID for the DataQuery API.
-    :param client_secret <str>: Client secret for the DataQuery API.
-    :param path <str>: Path to save the data to.
-    :param start_date <str>: Start date of data to download.
-    :param end_date <str>: End date of data to download.
-    """
-    with DQInterface(
-        client_id=client_id,
-        client_secret=client_secret,
-        proxy=proxy,
-    ) as dq:
-        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
-        tickers = dq.get_catalogue()
-        expressions = construct_jpmaqs_expressions(tickers)
-        data: pd.DataFrame = dq.download(
-            expressions=expressions,
-            start_date=start_date,
-            end_date=end_date,
-            save_to_path=path,
-            show_progress=show_progress,
-        )
 
 
 def get_credentials(file: str) -> Dict:
@@ -766,6 +770,11 @@ def cli():
 
     args = parser.parse_args()
     creds = get_credentials(args.credentials)
+    path = args.path
+    heartbeat = args.heartbeat
+    progress = args.progress
+
+
 
     if args.heartbeat:
         print(heartbeat_test(*creds))
