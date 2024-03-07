@@ -72,6 +72,15 @@ def generate_docs():
         with open(file, "w", encoding="utf8") as f:
             f.write(content)
 
+    # print the path to the generated documentation index file
+    print("Documentation generated at:\n")
+
+    print(
+        f"\tfile://"
+        + os.path.abspath("docs/build/html/index.html").replace("\\", "/")
+        + "\n"
+    )
+
 
 if __name__ == "__main__":
     generate_docs()
