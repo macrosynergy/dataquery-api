@@ -129,43 +129,6 @@ def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
     return return_df
 
 
-def save_ts_to_jpmaqs_csv(
-    timeseries: List[Dict],
-    path: str,
-):
-    getexpr = lambda d: d["attributes"][0]["expression"]
-    getts = lambda d: d["attributes"][0]["time-series"]
-    splitexpr = lambda s: str(s).replace("DB(JPMAQS,", "").replace(")", "").split(",")
-    getticker = lambda s: splitexpr(s)[0]
-    getmetric = lambda s: splitexpr(s)[1]
-    getcid = lambda s: getticker(s).split("_")[0]
-    getxcat = lambda s: getticker(s).split("_", 1)[1]
-    # tickers_in_ts =  TODO
-
-    for ticker in tqdm(tickers_all, desc="Formatting CSVs"):
-        xc_path = os.path.join(path, getxcat(ticker))
-        os.makedirs(xc_path, exist_ok=True)
-        exprs = all_expr_for_ticker(ticker)
-        if len(exprs) == 0:
-            continue
-        df_paths = [d["file"] for d in exprs]
-        metrics = [getmetric(d["expression"]) for d in exprs]
-        ticker_path = os.path.join(xc_path, f"{ticker}.csv")
-        functools.reduce(
-            lambda x, y: pd.merge(x, y, on="real_date", how="outer"),
-            [
-                pd.read_csv(f, parse_dates=["real_date"])
-                .rename(columns={"value": metric})
-                .set_index("real_date")
-                for f, metric in zip(df_paths, metrics)
-            ],
-        ).sort_values(by="real_date").reset_index().to_csv(ticker_path, index=False)
-
-        # Remove the individual files
-        for f in df_paths:
-            os.remove(f)
-
-
 def request_wrapper(
     url: str,
     headers: Optional[Dict] = None,
@@ -402,7 +365,6 @@ class DQInterface:
         url: str,
         params: dict,
         save_to_path: str,
-        jpmaqs_formatting: bool = False,
         **kwargs,
     ) -> List[str]:
         """
@@ -486,7 +448,6 @@ class DQInterface:
                         url=curr_url,
                         params=current_params,
                         save_to_path=save_to_path,
-                        **kwargs,
                     )
                 )
                 time.sleep(API_DELAY_PARAM)
