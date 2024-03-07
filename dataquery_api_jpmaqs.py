@@ -439,6 +439,7 @@ class DQInterface:
                 expr_batches,
                 desc="Requesting data",
                 disable=not show_progress,
+                total=len(expr_batches),
             ):
                 current_params: Dict = params.copy()
                 current_params["expressions"] = expr_batch
@@ -456,6 +457,7 @@ class DQInterface:
                 enumerate(futures),
                 desc="Downloading data",
                 disable=not show_progress,
+                total=len(futures),
             ):
                 try:
                     result = future.result()
