@@ -25,25 +25,21 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install python-minifier
+          pip install python-minifier black
 
-
-      - name: Minify - Regular
+      - name: Minify
         run: |
-          mkdir -p minified
-          pyminify -o minified/dq_api_mr.py \
+          pyminify -o dataquery_api_minified.py \
           --remove-literal-statements \
           --no-hoist-literals \
           --no-rename-locals \
           dataquery_api.py
 
-      - name: Minify - Extreme
-        run: |
-          mkdir -p minified
-          pyminify -o minified/dq_api_mx.py \
-          --remove-literal-statements \
-          --rename-globals \
-          dataquery_api.py
+          black dataquery_api_minified.py
+
+          python -c "open('dataquery_api_minified.py', 'r', encoding='utf-8').read().split('def cli():')[0].strip()" > dataquery_api_minified.py
+          # remove any empty lines 
+          sed -i '/^$/d' dataquery_api_minified.py
 
       - name: Configure Git
         run: |
