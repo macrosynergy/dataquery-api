@@ -6,6 +6,9 @@ on:
 
   workflow_dispatch:
 
+concurrency:
+  group: minify
+
 # Sets permissions to allow the bot to push to the repository
 permissions:
   contents: write
@@ -37,7 +40,7 @@ jobs:
 
           black dataquery_api_minified.py
 
-          python -c "open('dataquery_api_minified.py', 'r', encoding='utf-8').read().split('def cli():')[0].strip()" > dataquery_api_minified.py
+          python -c "print(open('dataquery_api_minified.py', 'r', encoding='utf-8').read().split('def cli():')[0].strip())" > dataquery_api_minified.py
           # remove any empty lines 
           sed -i '/^$/d' dataquery_api_minified.py
 
