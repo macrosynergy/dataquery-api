@@ -36,6 +36,7 @@ except ImportError as e:
         "environment using the following command:"
     )
     print("\n\t python -m pip install pandas requests tqdm\n")
+    raise e
 
 
 logger = logging.getLogger(__name__)

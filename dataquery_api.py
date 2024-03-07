@@ -35,7 +35,8 @@ except ImportError as e:
         "Please install the required packages in your Python "
         "environment using the following command:"
     )
-    print("\n\t python -m pip install pandas requests tqdm\n")
+    print("\n\t python -m pip install pandas requests tqdm\n")  #
+    raise e
 
 
 logger = logging.getLogger(__name__)
@@ -604,55 +605,6 @@ class DQInterface:
             return time_series_to_df(downloaded_data)
 
         return downloaded_data
-
-
-def download_all_jpmaqs_to_disk(
-    client_id: str,
-    client_secret: str,
-    proxy: Optional[Dict] = None,
-    path="./data",
-    show_progress: bool = False,
-    start_date: str = "1990-01-01",
-    end_date: Optional[str] = None,
-):
-    """
-    Download all JPMaQS data to disk.
-
-    :param client_id <str>: Client ID for the DataQuery API.
-    :param client_secret <str>: Client secret for the DataQuery API.
-    :param path <str>: Path to save the data to.
-    :param start_date <str>: Start date of data to download.
-    :param end_date <str>: End date of data to download.
-    """
-    if not isinstance(path, str):
-        raise ValueError("`path` must be a string.")
-
-    path = os.path.join(path, "JPMaQSDATA").replace("\\", "/")
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-
-    data: List[Dict[str, str]] = []  # [{expression:file}, {expression:file}, ...]
-    with DQInterface(
-        client_id=client_id,
-        client_secret=client_secret,
-        proxy=proxy,
-    ) as dq:
-        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
-        tickers = dq.get_catalogue()
-        expressions = construct_jpmaqs_expressions(tickers)
-        data: pd.DataFrame = dq.download(
-            expressions=expressions,
-            start_date=start_date,
-            end_date=end_date,
-            path=path,
-            show_progress=show_progress,
-        )
-
-    for dx in data:
-        if not os.path.exists(dx["file"]):
-            raise FileNotFoundError(
-                f"File {dx['file']} for expression {dx['expression']} not found."
-            )
 
 
 if __name__ == "__main__":
