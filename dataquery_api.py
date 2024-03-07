@@ -23,6 +23,7 @@ try:
     from datetime import datetime as datetime
     from datetime import timedelta, timezone
     import time
+    import functools
     from typing import Dict, Generator, Iterable, List, Optional, Union, overload
 
     import pandas as pd
