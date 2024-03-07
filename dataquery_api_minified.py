@@ -29,10 +29,6 @@ def form_full_url(url, params={}):
     )
 
 
-@overload
-def construct_jpmaqs_expressions(ticker, metrics): ...
-@overload
-def construct_jpmaqs_expressions(ticker, metrics): ...
 def construct_jpmaqs_expressions(ticker, metrics=["value", "grading", "eop_lag", "mop_lag"]):
     if isinstance(ticker, str):
         return [f"DB(JPMAQS,{ticker},{metric})" for metric in metrics]
@@ -310,40 +306,6 @@ class DQInterface:
         return downloaded_data
 
 
-def example_usage(client_id, client_secret):
-    expressions = [
-        "DB(CFX,USD,)",
-        "DB(CFX,AUD,)",
-        "DB(CFX,GBP,)",
-        "DB(JPMAQS,USD_EQXR_VT10,value)",
-        "DB(JPMAQS,EUR_EQXR_VT10,value)",
-        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
-        "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,grading)",
-        "DB(JPMAQS,GBP_EXALLOPENNESS_NSA_1YMA,eop_lag)",
-        "DB(JPMAQS,GBP_EXALLOPENNESS_NSA_1YMA,mop_lag)",
-    ]
-    with DQInterface(client_id, client_secret) as dq:
-        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
-        data = dq.download(expressions=expressions, start_date="2023-02-20", end_date="2023-03-01")
-        assert isinstance(data, pd.DataFrame)
-        print(data.head(20))
-
-
-def heartbeat_test(client_id, client_secret, proxy=None):
-    with DQInterface(client_id, client_secret, proxy) as dq:
-        start = time.time()
-        hb = dq.heartbeat()
-        end = time.time()
-        if not hb:
-            print(f"Connection to DataQuery API failed.Retrying and logging printing error to stdout.")
-            start = time.time()
-            dq.heartbeat(raise_error=True)
-            end = time.time()
-        if hb:
-            print(f"Connection to DataQuery API")
-            print(f"Authentication + Heartbeat took {end-start:.2f} seconds.")
-
-
 def download_all_jpmaqs_to_disk(
     client_id, client_secret, proxy=None, path="./data", show_progress=False, start_date="1990-01-01", end_date=None
 ):
@@ -358,41 +320,3 @@ def download_all_jpmaqs_to_disk(
             save_to_path=path,
             show_progress=show_progress,
         )
-
-
-def get_credentials(file):
-    emsg = "`{cred}` not found in the credentials file ('" + file + "')."
-    cks = ["client_id", "client_secret"]
-    with open(file, "r") as f:
-        res = json.load(f)
-        for ck in cks:
-            if ck not in res.keys():
-                raise ValueError(emsg.format(cred=ck))
-        if not isinstance(res.get("proxy", {}), dict):
-            raise ValueError("`proxy` must be a dictionary.")
-        res = {res.get(a, None) for a in cks + ["proxy"]}
-        return res
-
-
-def cli():
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Download JPMaQS data.")
-    parser.add_argument("--credentials", type=str, help="Path to the credentials JSON.", required=True)
-    parser.add_argument("--path", type=str, help="Path to save the data to.", required=False)
-    parser.add_argument("--heartbeat", type=bool, help="Test the DataQuery API heartbeat.", required=False)
-    parser.add_argument(
-        "--progress", type=bool, help="Whether to show a progress bar for the download.", required=False
-    )
-    args = parser.parse_args()
-    creds = get_credentials(args.credentials)
-    if args.heartbeat:
-        print(heartbeat_test(*creds))
-    if args.path is None:
-        example_usage(*creds)
-    else:
-        download_all_jpmaqs_to_disk(*creds, path=args.path, show_progress=args.progress)
-
-
-if __name__ == "__main__":
-    cli()
