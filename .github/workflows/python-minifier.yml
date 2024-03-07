@@ -34,14 +34,14 @@ jobs:
         run: |
           python -c "import sys;print(str(open('dataquery_api.py', 'r', encoding='utf8').read()).split('# CLI and example usage')[0])" > dataquery_api_minified.py
 
-          pyminify -o dataquery_api_minified.py \
+          pyminify -i \
           --remove-literal-statements \
           --no-hoist-literals \
           --no-rename-locals \
           dataquery_api_minified.py
           
           # line width to 120
-          black dataquery_api_minified.py --line-length 120
+          # black dataquery_api_minified.py --line-length 120
 
       - name: Configure Git
         run: |
