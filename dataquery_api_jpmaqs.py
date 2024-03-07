@@ -531,8 +531,9 @@ class DQInterface:
 
         :return <Union[List[Dict], List[str], pd.DataFrame]>:
             - List of dictionaries (if as_dataframe=False).
-            - List of dictionaries containing file paths in the form ``{expression:file}``
-                (if save_to_path is not provided).
+            - List of dictionaries containing file paths in the form
+                ``[{"expression": "some_expr", "file": "path/to/some_expr.csv"}, ...]``.
+                (if save_to_path is provided).
             - Pandas DataFrame with columns ["real_date", "expression", "value"]
                 (if as_dataframe=True, default).
         """
@@ -570,9 +571,10 @@ class DQInterface:
             print(f"Downloaded {len(downloaded_data)} / {len(expressions)} files.")
             result = [
                 {
-                    str(os.path.basename(f)).split(".")[0]: os.path.abspath(
-                        os.path.normpath(f)
-                    )
+                    "expression": str(os.path.basename(f)).split(".")[0],
+                    "file": str(os.path.abspath(os.path.normpath(f))).replace(
+                        "\\", "/"
+                    ),
                 }
                 for f in downloaded_data
             ]
