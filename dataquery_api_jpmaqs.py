@@ -655,14 +655,16 @@ def download_all_jpmaqs_to_disk(
             )
 
 
-if __name__ == "__main__":
+# CLI and example usage
 
-    client_id = "your_client_id"
-    client_secret = "your_client_secret"
-    proxy = None
 
-    test_path = "./ticker_data"
-
+def example_usage(
+    client_id: str, client_secret: str, proxy: Optional[Dict] = None, test_path=None
+):
+    """
+    Example usage of the DQInterface class.
+    Click "[source]" to see the code.
+    """
     expressions = [
         "DB(CFX,USD,)",
         "DB(CFX,AUD,)",
@@ -691,3 +693,146 @@ if __name__ == "__main__":
         if not test_path:
             assert isinstance(data, pd.DataFrame)
             print(data.head(20))
+
+
+def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = None):
+    """
+    Test the DataQuery API heartbeat.
+
+    :param client_id <str>: Client ID for the DataQuery API.
+    :param client_secret <str>: Client secret for the DataQuery API.
+    :param proxy <dict>: Dictionary containing the proxy settings.
+
+    :return <bool>: True if the heartbeat is successful, False otherwise.
+    """
+
+    with DQInterface(
+        client_id=client_id, client_secret=client_secret, proxy=proxy
+    ) as dq:
+        start = time.time()
+        hb = dq.heartbeat()
+        end = time.time()
+        if not hb:
+            print(
+                f"Connection to DataQuery API failed."
+                "Retrying and logging printing error to stdout."
+            )
+            start = time.time()
+            dq.heartbeat(raise_error=True)
+            end = time.time()
+
+        if hb:
+            print(f"Connection to DataQuery API")
+            print(f"Authentication + Heartbeat took {end - start:.2f} seconds.")
+
+
+def get_credentials(file: str) -> Dict:
+    """
+    Get the credentials from a JSON file.
+
+    :param file <str>: Path to the credentials JSON file.
+
+    :return <dict>: Dictionary containing the credentials.
+    """
+    emsg = "`{cred}` not found in the credentials file ('" + file + "')."
+    cks = ["client_id", "client_secret"]
+    with open(file, "r") as f:
+        res: dict = json.load(f)
+        for ck in cks:
+            if ck not in res.keys():
+                raise ValueError(emsg.format(cred=ck))
+        if not isinstance(res.get("proxy", {}), dict):
+            raise ValueError("`proxy` must be a dictionary.")
+
+        res = {a: res[a] for a in (cks + ["proxy"]) if res.get(a, None) is not None}
+
+        return res
+
+
+def cli():
+    """
+    CLI Arguments to download JPMaQS data.
+
+    Usage:
+
+    .. code-block:: bash
+
+        python dataquery_api.py --credentials <path_to_credentials> --path <path_to_save_data> --progress <bool>
+
+    Your credentials file should look like this (proxy is optional):
+
+    .. code-block:: python
+
+        {
+            "client_id": "your_client_id",
+            "client_secret": "your_client_secret"
+            "proxy": {
+                "https": "https://your_proxy:port",
+                }
+        }
+
+    :param credentials <str>: Path to the credentials JSON (``--credentials``).
+    :param path <str>: Path to save the data to (``--path``). If not provided, only a few
+        timeseries will be downloaded as a DataFrame and printed. This is only for testing.
+    :param progress <bool>: Whether to show a progress bar for the download (``--progress``).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Download JPMaQS data.")
+
+    parser.add_argument(
+        "--credentials",
+        type=str,
+        help="Path to the credentials JSON.",
+        # required=True,
+        default="credentials.json",
+    )
+    parser.add_argument(
+        "--path",
+        type=str,
+        help="Path to save the data to.",
+        required=False,
+        default="~/tickers/",
+    )
+
+    parser.add_argument(
+        "--test-path",
+        type=str,
+        help="Path to save the data to, for testing functionality.",
+        required=False,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--heartbeat",
+        action="store_true",
+        help="Test the DataQuery API heartbeat and exit.",
+        required=False,
+        default=False,
+    )
+
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Whether to show a progress bar for the download.",
+        required=False,
+        default=True,
+    )
+
+    args = parser.parse_args()
+    creds = get_credentials(args.credentials)
+
+    heartbeat_test(**creds)
+    if args.heartbeat:
+        return
+
+    if args.path is None:
+        example_usage(**creds, test_path=args.test_path)
+    else:
+        download_all_jpmaqs_to_disk(
+            **creds, path=args.path, show_progress=args.progress
+        )
+
+
+if __name__ == "__main__":
+    cli()
