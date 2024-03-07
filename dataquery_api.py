@@ -430,9 +430,6 @@ class DQInterface:
 
         downloaded_data: List[Union[Dict, pd.DataFrame]] = []
         failed_batches: List[List[str]] = []
-        if self.heartbeat(raise_error=True):
-            print(f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}")
-            print("Connected to DataQuery API!")
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures: List[concurrent.futures.Future] = []
@@ -555,6 +552,11 @@ class DQInterface:
             "nan_treatment": nan_treatment,
             "data": "NO_REFERENCE_DATA",
         }
+        dwnld_start = time.time()
+        if self.heartbeat(raise_error=True):
+            print(f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}")
+            print("Connected to DataQuery API!")
+
         downloaded_data: Union[List[Dict], List[str]] = self._get_timeseries(
             expressions=expressions,
             params=params_dict,
@@ -562,9 +564,11 @@ class DQInterface:
             save_to_path=path,
             show_progress=show_progress,
         )
+        dwnld_end = time.time()
         print(
-            f"Download done."
-            f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
+            f"Download done.\n"
+            f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}.\n"
+            f"Download took {dwnld_end - dwnld_start:.2f} seconds."
         )
         if path:
             assert all(isinstance(f, str) for f in downloaded_data)
