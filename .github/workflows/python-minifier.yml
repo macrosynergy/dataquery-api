@@ -37,12 +37,12 @@ jobs:
           --no-hoist-literals \
           --no-rename-locals \
           dataquery_api.py
+          
+          # line width to 120
+          black dataquery_api_minified.py --line-length 120
 
-          black dataquery_api_minified.py
+          python -c "print(open('dataquery_api_minified.py', 'r', encoding='utf-8').read().split('\ndef cli():')[0].strip())" > dataquery_api_minified.py
 
-          python -c "print(open('dataquery_api_minified.py', 'r', encoding='utf-8').read().split('def cli():')[0].strip())" > dataquery_api_minified.py
-          # remove any empty lines 
-          sed -i '/^$/d' dataquery_api_minified.py
 
       - name: Configure Git
         run: |
