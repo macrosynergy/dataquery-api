@@ -17,16 +17,16 @@ For JPMaQS specific functionality, see the :
 
 try:
     import concurrent.futures
-    import logging
-    import os
+    import functools
     import glob
     import json
+    import logging
+    import os
+    import shutil
+    import time
     from datetime import datetime as datetime
     from datetime import timedelta, timezone
-    import time
-    import functools
-    import itertools
-    from typing import Dict, Generator, Iterable, List, Optional, Union, overload
+    from typing import Any, Dict, List, Optional, Union, overload
 
     import pandas as pd
     import requests
@@ -47,8 +47,6 @@ def mtqdm(*args, **kwargs):
 
 try:
     from tqdm import tqdm
-
-    # raise ImportError
 except Exception as e:
     tqdm = mtqdm
 
@@ -87,6 +85,15 @@ def form_full_url(url: str, params: Dict = {}) -> str:
         (f"{url}?{requests.compat.urlencode(params)}" if params else url),
         safe="%/:=&?~#+!$,;'@()*[]",
     )
+
+
+def UTCNOW() -> str:
+    """
+    Get the current time in UTC as a string.
+
+    :return <datetime>: Current time in UTC, YYYY-MM-DD HH:MM:SS.msms
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-4]
 
 
 @overload
@@ -148,6 +155,11 @@ def save_ts_to_jpmaqs_csv(
     path: str,
     drop_na: bool = True,
 ) -> List[Dict[str, str]]:
+    """
+    Saves the timeseries data to a CSV file in the JPMaQS format, with all data for a single ticker
+    saved to a single file. Only accepts timeseries data for a single ticker.
+    Returns a list of saved expressions.
+    """
 
     getexprts = lambda d: d["attributes"][0]["expression"]
     getts = lambda d: d["attributes"][0]["time-series"]
@@ -156,17 +168,9 @@ def save_ts_to_jpmaqs_csv(
     getmetric = lambda s: splitexpr(s)[1]
     getcid = lambda s: getticker(s).split("_")[0]
     getxcat = lambda s: getticker(s).split("_", 1)[1]
-    tsforticker = lambda t: list(
-        filter(lambda d: getticker(getexprts(d)) == t, timeseries_list)
-    )
     tickerpath = lambda t: os.path.join(path, getxcat(t), f"{t}.csv")
 
     def _create_ticker_csv(dict_list: List[Dict]) -> List[str]:
-        """
-        Saves files to disk, and glues them together with any pre-existing files.
-        Only accepts timeseries data for a single ticker.
-        Returns a list of saved expressions.
-        """
         assert (len(set(map(getticker, map(getexprts, dict_list)))) == 1) and all(
             getts(d) is not None for d in dict_list
         ), "All expressions must be for the same ticker."
@@ -180,19 +184,26 @@ def save_ts_to_jpmaqs_csv(
             for d in dict_list
         ]
         if os.path.exists(_path):
-            download_metrics = [s.columns[0] for s in series]
-            lcsv: pd.DataFrame = pd.read_csv(
-                _path, parse_dates=["real_date"], index_col="real_date"
-            )
-            lcsv = lcsv.drop(columns=download_metrics, errors="ignore")
+            # if a ticker file exists, load all columns from it ad update them with the new data
+            # delete the old file
+            _new_mtrs = [s.columns[0] for s in series]
+            lcsv: pd.DataFrame = pd.read_csv(_path, index_col="real_date")
+            lcsv = lcsv.drop(columns=list(set(lcsv.columns) & set(_new_mtrs)))
             os.remove(_path)
-            series.append(lcsv)
-        mtrs = [s.columns[0] for s in series]
+            if len(lcsv.columns) > 0:
+                series.append(lcsv)
 
-        functools.reduce(
-            lambda x, y: pd.merge(x, y, on="real_date", how="outer"),
-            sorted(series, key=lambda x: x.columns[0]),
-        ).sort_values(by="real_date").reset_index().to_csv(_path, index=False)
+        mtrs = [s.columns[0] for s in series]
+        series = sorted(series, key=lambda x: x.columns[0])
+        for s in series:
+            s.index = pd.to_datetime(s.index).strftime("%Y-%m-%d")
+        # dropna in rows where all values are NaN
+        if drop_na:
+            series = [s.dropna(how="all") for s in series]
+            logger.info(f"Dropped NaN values for {ticker}.")
+
+        pd.concat(series, axis=1).reset_index().to_csv(_path, index=False)
+
         return construct_jpmaqs_expressions(ticker, mtrs)
 
     tickers_in_ts = list(set([getticker(getexprts(_ts)) for _ts in timeseries_list]))
@@ -200,7 +211,10 @@ def save_ts_to_jpmaqs_csv(
     saved_expressions = []
     for ticker in tickers_in_ts:
         os.makedirs(os.path.join(path, getxcat(ticker)), exist_ok=True)
-        _tslist = tsforticker(ticker)
+        # _tslist = tsforticker(ticker)
+        _tslist = list(
+            filter(lambda d: getticker(getexprts(d)) == ticker, timeseries_list)
+        )
         if len(_tslist) == 0:
             continue
         try:
@@ -210,7 +224,8 @@ def save_ts_to_jpmaqs_csv(
             print(f"Error creating csv for ticker {ticker} : {e}")
             raise e
 
-    if not set(saved_expressions) == set(all_found_expressions):
+    if len(set(all_found_expressions) - set(saved_expressions)) > 0:
+        # existing exprs may not necessarily be in the list of all found exprs
         raise Exception(
             "Batch failed to save all expressions. "
             f"Saved expressions: {saved_expressions}, "
@@ -224,7 +239,7 @@ def save_ts_to_jpmaqs_csv(
                 path, getxcat(getticker(expr)), f"{getticker(expr)}.csv"
             ),
         }
-        for expr in saved_expressions
+        for expr in all_found_expressions
     ]
 
     return r
@@ -257,7 +272,7 @@ def request_wrapper(
         else:
             raise Exception(
                 f"Request failed with status code {response.status_code}.\n"
-                f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}\n"
+                f"Timestamp (UTC): {UTCNOW()}\n"
                 f"Response : {response.text}\n"
                 f"URL: {form_full_url(url, params)}"
                 f"Request headers: {headers}\n"
@@ -265,10 +280,10 @@ def request_wrapper(
 
     except Exception as e:
         if isinstance(e, requests.exceptions.ProxyError):
-            raise Exception("Proxy error. Check your proxy settings. Exception : ", e)
+            raise Exception("Proxy error. Check your proxy settings. \nException : ", e)
         elif isinstance(e, requests.exceptions.ConnectionError):
             raise Exception(
-                "Connection error. Check your internet connection. Exception : ", e
+                "Connection error. Check your internet connection. \nException : ", e
             )
         else:
             raise e
@@ -280,6 +295,7 @@ class DQInterface:
         client_id: str,
         client_secret: str,
         proxy: Optional[Dict] = None,
+        batch_size: int = EXPR_LIMIT,
         base_url: str = OAUTH_BASE_URL,
         dq_resource_id: Optional[str] = OAUTH_DQ_RESOURCE_ID,
     ):
@@ -289,6 +305,7 @@ class DQInterface:
         self.dq_resource_id: str = dq_resource_id
         self.current_token: Optional[Dict] = None
         self.base_url: str = base_url
+        self.batch_size: int = batch_size
         self.token_data: Dict = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
@@ -376,7 +393,7 @@ class DQInterface:
             raise Exception(
                 f"DataQuery API Heartbeat failed. \n Response : {response} \n"
                 f"User ID: {self.get_access_token()['user_id']}\n"
-                f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
+                f"Timestamp (UTC): {UTCNOW()}"
             )
 
         return result
@@ -396,14 +413,14 @@ class DQInterface:
                         f"Content was not found for the request: {response}\n"
                         f"User ID: {self.get_access_token()['user_id']}\n"
                         f"URL: {form_full_url(url, params)}\n"
-                        f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
+                        f"Timestamp (UTC): {UTCNOW()}"
                     )
 
             raise Exception(
                 f"Invalid response from DataQuery: {response}\n"
                 f"User ID: {self.get_access_token()['user_id']}\n"
                 f"URL: {form_full_url(url, params)}"
-                f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}"
+                f"Timestamp (UTC): {UTCNOW()}"
             )
 
         downloaded_data.extend(response["instruments"])
@@ -478,6 +495,7 @@ class DQInterface:
         :param params <dict>: Parameters to pass to request.
         :param save_to_path <str>: Path to save the file to.
         """
+        drop_na: bool = kwargs.pop("drop_na", False)
 
         timeseries_list = self._fetch(url, params, **kwargs)
         if path is None:
@@ -485,7 +503,10 @@ class DQInterface:
 
         if jpmaqs_formatting:
             res = save_ts_to_jpmaqs_csv(
-                timeseries_list=timeseries_list, path=path, **kwargs
+                timeseries_list=timeseries_list,
+                path=path,
+                drop_na=drop_na,
+                **kwargs,
             )
             if len(res) != len(timeseries_list):
                 if kwargs.get("ignore_errors", False):
@@ -519,7 +540,6 @@ class DQInterface:
         path: Optional[str] = None,
         max_retry: int = MAX_RETRY,
         show_progress: bool = True,
-        # jpmaqs_formatting: bool = False,
         **kwargs,
     ) -> List[Dict]:
         """
@@ -534,9 +554,11 @@ class DQInterface:
         if max_retry < 0:
             raise Exception("Maximum number of retries reached.")
 
+        expressions = sorted(expressions)
+
         expr_batches: List[List[str]] = [
-            [expressions[i : min(i + EXPR_LIMIT, len(expressions))]]
-            for i in range(0, len(expressions), EXPR_LIMIT)
+            expressions[i : min(i + self.batch_size, len(expressions))]
+            for i in range(0, len(expressions), self.batch_size)
         ]
 
         downloaded_data: List[Union[Dict, pd.DataFrame]] = []
@@ -560,7 +582,6 @@ class DQInterface:
                         url=curr_url,
                         params=current_params,
                         path=path,
-                        # jpmaqs_formatting=jpmaqs_formatting,
                         **kwargs,
                     )
                 )
@@ -592,7 +613,9 @@ class DQInterface:
                         )
 
                     failed_batches.append(expr_batches[ix])
-                    logger.error(f"Failed to download data for batch {ix} : {e}")
+                    logger.error(
+                        f"Failed to download data for batch with expressions: {expr_batches[ix]}"
+                    )
 
         if len(failed_batches) > 0:
             retry_exprs: List[str] = [
@@ -603,16 +626,16 @@ class DQInterface:
                     f"Retrying failed expressions: {retry_exprs};",
                     f"\nRetries left: {max_retry}",
                 )
-                return self._get_timeseries(
+                retried_output = self._get_timeseries(
                     expressions=retry_exprs,
                     params=params,
                     as_dataframe=as_dataframe,
                     path=path,
                     max_retry=max_retry - 1,
                     show_progress=show_progress,
-                    # jpmaqs_formatting=jpmaqs_formatting,
                     **kwargs,
                 )
+                downloaded_data.extend(retried_output)
             else:
                 print(
                     f"Failed to download data for expressions: {retry_exprs}",
@@ -625,8 +648,8 @@ class DQInterface:
     def download(
         self,
         expressions: List[str],
-        start_date: str,
-        end_date: str,
+        start_date: str = "1990-01-01",
+        end_date: str = datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         as_dataframe: bool = True,
         jpmaqs_formatting: bool = False,
         path: Optional[str] = None,
@@ -686,7 +709,7 @@ class DQInterface:
         }
         dwnld_start = time.time()
         if self.heartbeat(raise_error=True):
-            print(f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}")
+            print(f"Timestamp (UTC): {UTCNOW()}")
 
         print("Downloading from DataQuery API:")
 
@@ -702,20 +725,23 @@ class DQInterface:
         dwnld_end = time.time()
         print(
             f"Download done.\n"
-            f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}.\n"
-            f"Download took {dwnld_end - dwnld_start:.2f} seconds."
+            f"Timestamp (UTC): {UTCNOW()}.\n"
+            "Download took "
+            f"{(dwnld_end - dwnld_start) / 60:.0f}mins {(dwnld_end - dwnld_start) % 60:.1f}s."
         )
         if path:
             if jpmaqs_formatting:
                 assert all(isinstance(f, dict) for f in downloaded_data)
                 exprs = list(set([d["expression"] for d in downloaded_data]))
                 print(f"Data saved to {path}.")
-                print(f"Downloaded {len(exprs)} / {len(expressions)} files.")
+                print(f"Downloaded {len(exprs)} / {len(expressions)} tickers.")
                 return downloaded_data
 
             assert all(isinstance(f, str) for f in downloaded_data)
             print(f"Data saved to {path}.")
-            print(f"Downloaded {len(downloaded_data)} / {len(expressions)} files.")
+            print(
+                f"Downloaded {len(downloaded_data)} / {len(expressions)} expressions."
+            )
             result = [
                 {
                     "expression": str(os.path.basename(f)).split(".")[0],
@@ -731,18 +757,20 @@ class DQInterface:
 
         mismm = "Expression not found; No message available."
         missing_exprs = [
-            (
-                expr["attributes"][0]["expression"],
-                expr["attributes"][0].get("message", mismm),
+            " - ".join(
+                (
+                    expr["attributes"][0]["expression"],
+                    expr["attributes"][0].get("message", mismm),
+                )
             )
             for expr in downloaded_data
             if expr["attributes"][0]["time-series"] is None
         ]
 
         if len(missing_exprs) > 0:
-            logger.warning(f"Missing expressions: {missing_exprs}")
-            print(
-                f"Missing expressions: {missing_exprs}\n"
+            emsg = "\n\t".join(missing_exprs)
+            logger.warning(
+                f"Missing expressions: \n\t{emsg}\n"
                 f"Downloaded {len(downloaded_data) - len(missing_exprs)}"
                 f" / {len(expressions)} expressions."
             )
@@ -781,41 +809,38 @@ def concat_csvs_to_df(
     )
 
 
-def cleanup_csvs(path: str, expressions_paths: List[Dict[str, str]]) -> None:
-    splitexpr = lambda s: str(s).replace("DB(JPMAQS,", "").replace(")", "").split(",")
-    getticker = lambda s: splitexpr(s)[0]
-    getmetric = lambda s: splitexpr(s)[1]
-    getcid = lambda s: getticker(s).split("_")[0]
-    getxcat = lambda s: getticker(s).split("_", 1)[1]
-    all_expr_for_ticker = lambda t: list(
-        filter(lambda d: getticker(d["expression"]) == t, expressions_paths)
-    )
-    tickers_all: List[str] = list(
-        set([getticker(d["expression"]) for d in expressions_paths])
-    )
+def summary_jpmaqs_csvs(
+    path: str, expressions_list: Optional[List[str]] = True
+) -> Dict:
+    files = glob.glob(os.path.join(path, "**", "*.csv"), recursive=True)
+    summary = {}
+    for file in tqdm(files, desc="Verifying files"):
+        ticker = os.path.basename(file).split(".")[0]
+        df = pd.read_csv(file, parse_dates=["real_date"])
+        metrics = list(set(df.columns) - {"real_date"})
+        summary[ticker] = {
+            "path": file,
+            "start_date": df["real_date"].min(),
+            "end_date": df["real_date"].max(),
+            "metrics": metrics,
+            "n_cols": df.shape[1],
+            "expressions": construct_jpmaqs_expressions(ticker, metrics),
+        }
+    if expressions_list:
+        found_exprs = list(
+            set([expr for t in summary for expr in summary[t]["expressions"]])
+        )
 
-    for ticker in tqdm(tickers_all, desc="Formatting CSVs"):
-        xc_path = os.path.join(path, getxcat(ticker))
-        os.makedirs(xc_path, exist_ok=True)
-        exprs = all_expr_for_ticker(ticker)
-        if len(exprs) == 0:
-            continue
-        df_paths = [d["file"] for d in exprs]
-        metrics = [getmetric(d["expression"]) for d in exprs]
-        ticker_path = os.path.join(xc_path, f"{ticker}.csv")
-        functools.reduce(
-            lambda x, y: pd.merge(x, y, on="real_date", how="outer"),
-            [
-                pd.read_csv(f, parse_dates=["real_date"])
-                .rename(columns={"value": metric})
-                .set_index("real_date")
-                for f, metric in zip(df_paths, metrics)
-            ],
-        ).sort_values(by="real_date").reset_index().to_csv(ticker_path, index=False)
+    missing_exprs = list(set(expressions_list) - set(found_exprs))
+    if len(missing_exprs) > 0:
+        for i in range(0, (min(len(missing_exprs), 25))):
+            print(f"Expression missing from downloaded data: {missing_exprs[i]}")
 
-        # Remove the individual files
-        for f in df_paths:
-            os.remove(f)
+        if len(missing_exprs) > i:
+            print(f"... (truncated {len(missing_exprs) - i} warnings)")
+            print(f"Total missing expressions: {len(missing_exprs)}")
+
+    return summary
 
 
 def download_all_jpmaqs_to_disk(
@@ -824,7 +849,9 @@ def download_all_jpmaqs_to_disk(
     proxy: Optional[Dict] = None,
     path="./data",
     show_progress: bool = False,
-    drop_na: bool = False,
+    drop_na: bool = True,
+    jpmaqs_formatting: bool = True,
+    overwrite: bool = False,
 ):
     """
     Download all JPMaQS data to disk.
@@ -834,6 +861,8 @@ def download_all_jpmaqs_to_disk(
     :param path <str>: Path to save the data to.
     :param start_date <str>: Start date of data to download.
     :param end_date <str>: End date of data to download.
+    :param show_progress <bool>: Whether to show a progress bar for the download.
+    :param drop_na <bool>: Whether to drop rows with NaN values.
     """
     if not isinstance(path, str):
         raise ValueError("`path` must be a string.")
@@ -841,42 +870,43 @@ def download_all_jpmaqs_to_disk(
     path = os.path.join(os.path.expanduser(path), "JPMaQSDATA").replace("\\", "/")
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
+    else:
+        if overwrite:
+            shutil.rmtree(path)
+            os.makedirs(path, exist_ok=True)
 
     data: List[Dict[str, str]] = []  # [{expression:file}, {expression:file}, ...]
     tickers = []
+    expressions = []
     with DQInterface(
         client_id=client_id,
         client_secret=client_secret,
         proxy=proxy,
+        batch_size=5,
     ) as dq:
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
-
         tickers = dq.get_catalogue()
-        expressions = construct_jpmaqs_expressions(tickers)
+        expressions = construct_jpmaqs_expressions(tickers) + ["testing-foobar"]
         data: List[Dict] = dq.download(
             expressions=expressions,
             path=path,
             show_progress=show_progress,
-            jpmaqs_formatting=True,
+            jpmaqs_formatting=jpmaqs_formatting,
             drop_na=drop_na,
         )
+    if jpmaqs_formatting:
+        summary_jpmaqs_csvs(path, expressions_list=expressions)
+    else:
+        wmax = 0
+        for dx in tqdm(data, desc="Verifying files"):
+            if not os.path.exists(dx["file"]):
+                wmax += 1
+                if wmax < 25:
+                    print(f"File not found: {dx['file']}")
 
-    rmexpr = lambda s: str(s).replace("DB(JPMAQS,", "").replace(")", "").split(",")[0]
-    downloaded_data = []
-    for d in data:
-        if os.path.exists(d["file"]):
-            downloaded_data.append(d)
-        else:
-            print(
-                "Error - File not found: "
-                f"Expression {d['expression']}, File {d['file']}"
-            )
-    if len(downloaded_data) != len(data):
-        print("The following tickers will not have concatenated data:")
-        print(set(tickers) - set([rmexpr(d["expression"]) for d in downloaded_data]))
-
-    if len(downloaded_data) > 0:
-        cleanup_csvs(path, downloaded_data)
+        if wmax >= 25:
+            print(f"... (truncated {wmax - 25} warnings)")
+            print(f"Total missing files: {wmax}")
 
 
 # CLI and example usage
@@ -894,15 +924,9 @@ def example_usage(
         if not os.path.exists(path):
             os.makedirs(path, exist_ok=True)
 
-    tickers = [
-        "USD_EQXR_VT10",
-        "EUR_EQXR_VT10",
-        "EUR_FXXR_NSA",
-        "GBP_FXXR_NSA",
-        "GBP_EQXR_VT10",
-        "AUD_EXALLOPENNESS_NSA_1YMA",
-        "GBP_EXALLOPENNESS_NSA_1YMA",
-    ]
+    cids = ["USD", "EUR", "GBP", "AUD"]
+    xcats = ["EQXR_NSA", "FXXR_NSA", "EQXR_VT10", "EXALLOPENNESS_NSA_1YMA"]
+    tickers = [f"{cid}_{xcat}" for cid in cids for xcat in xcats] + ["testing-foobar"]
     expressions = construct_jpmaqs_expressions(tickers)
 
     with DQInterface(
@@ -965,19 +989,34 @@ def get_credentials(file: str) -> Dict:
 
     :return <dict>: Dictionary containing the credentials.
     """
-    emsg = "`{cred}` not found in the credentials file ('" + file + "')."
-    cks = ["client_id", "client_secret"]
-    with open(file, "r") as f:
-        res: dict = json.load(f)
-        for ck in cks:
-            if ck not in res.keys():
-                raise ValueError(emsg.format(cred=ck))
-        if not isinstance(res.get("proxy", {}), dict):
-            raise ValueError("`proxy` must be a dictionary.")
+    try:
+        emsg = "`{cred}` not found in the credentials file ('" + file + "')."
+        cks = ["client_id", "client_secret"]
+        with open(file, "r") as f:
+            res: dict = json.load(f)
+            for ck in cks:
+                if ck not in res.keys():
+                    raise ValueError(emsg.format(cred=ck))
+            if not isinstance(res.get("proxy", {}), dict):
+                raise ValueError("`proxy` must be a dictionary.")
 
-        res = {a: res[a] for a in (cks + ["proxy"]) if res.get(a, None) is not None}
+            res = {a: res[a] for a in (cks + ["proxy"]) if res.get(a, None) is not None}
 
-        return res
+            return res
+    except Exception as e:
+        print(
+            """
+    ========== Error getting credentials ==========
+    The credentials file must be a JSON file with the following format (proxy is optional):
+        {
+            "client_id": "your_client_id",
+            "client_secret": "your_client_secret"
+            "proxy": { "https": "https://your_proxy:port", }
+        }
+    ========== Error getting credentials ==========
+        """
+        )
+        raise e
 
 
 def cli():
@@ -1057,9 +1096,28 @@ def cli():
         required=False,
         default=False,
     )
+    parser.add_argument(
+        "--timeseries",
+        action="store_true",
+        default=False,
+        required=False,
+        help="Whether to download data as a timeseries or in the JPMaQS format.",
+    )
+
+    parser.add_argument(
+        "--dropna",
+        type=bool,
+        default=False,
+        required=False,
+        help="Whether to drop rows/entries with **all** NaN values.",
+    )
 
     args = parser.parse_args()
-    creds = get_credentials(args.credentials)
+    try:
+        creds = get_credentials(args.credentials)
+    except Exception as e:
+        print(f"Error getting credentials - {type(e).__name__} : {e}")
+        return
 
     if args.heartbeat:
         heartbeat_test(**creds)
@@ -1073,6 +1131,8 @@ def cli():
             path=args.path,
             show_progress=args.progress,
             overwrite=args.overwrite,
+            jpmaqs_formatting=not args.timeseries,
+            drop_na=args.dropna,
         )
 
 
