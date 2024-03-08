@@ -17,16 +17,14 @@ For JPMaQS specific functionality, see the :
 
 try:
     import concurrent.futures
-    import functools
     import glob
     import json
     import logging
     import os
     import shutil
     import time
-    from datetime import datetime as datetime
-    from datetime import timedelta, timezone
-    from typing import Any, Dict, List, Optional, Union, overload
+    from datetime import datetime, timedelta, timezone
+    from typing import Dict, List, Optional, Union, overload
 
     import pandas as pd
     import requests
@@ -227,7 +225,7 @@ def save_ts_to_jpmaqs_csv(
             res = _create_ticker_csv(_tslist)
             saved_expressions += res
         except Exception as e:
-            print(f"Error creating csv for ticker {ticker} : {e}")
+            print(f"\nError creating csv for ticker {ticker} : {e}")
             raise e
 
     if len(set(all_found_expressions) - set(saved_expressions)) > 0:
@@ -880,7 +878,7 @@ def download_all_jpmaqs_to_disk(
         client_id=client_id,
         client_secret=client_secret,
         proxy=proxy,
-        batch_size=5,
+        batch_size=EXPR_LIMIT,
     ) as dq:
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
         if not test_expressions:
@@ -888,6 +886,7 @@ def download_all_jpmaqs_to_disk(
             expressions = construct_jpmaqs_expressions(tickers)
         else:
             expressions = test_expressions
+
         data: List[Dict] = dq.download(
             expressions=expressions,
             path=path,
@@ -895,10 +894,16 @@ def download_all_jpmaqs_to_disk(
             jpmaqs_formatting=jpmaqs_formatting,
         )
     if jpmaqs_formatting:
-        json.dump(
-            summary_jpmaqs_csvs(path, expressions_list=expressions),
-            open(os.path.join(path, "info.json"), "w"),
-        )
+        summary = summary_jpmaqs_csvs(path, expressions_list=expressions)
+        with open(
+            os.path.join(
+                os.path.dirname(path),
+                f"download_summary_{datetime.now().strftime('%Y%m%d%H%M%S')}.json",
+            ),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(summary, f, indent=4)
     else:
         wmax = 0
         for dx in tqdm(data, desc="Verifying files"):
@@ -1031,6 +1036,7 @@ def cli():
         type=str,
         help="Path to save the data to. Will overwrite existing files.",
         required=False,
+        # default="data",
     )
 
     parser.add_argument(
@@ -1078,7 +1084,7 @@ def cli():
 
     if args.path is None and args.test_path is None:
         parser.print_help()
-        return 
+        return
 
     if args.path is None:
         if args.test_path is not None:
