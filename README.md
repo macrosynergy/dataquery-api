@@ -55,16 +55,18 @@ Note: `tqdm` is only used for the progress bar, and is not essential to the func
 2. Runing the script:
 
 ```
-$ python dataquery_api_jpmaqs.py [-h] [--credentials CREDENTIALS] [--path PATH] [--test-path TEST_PATH] [--heartbeat] [--progress]
+$ python dataquery_api_jpmaqs.py [-h] [--credentials CREDENTIALS] [--path PATH] [--test-path TEST_PATH] [--heartbeat] [--timeseries] [--progress]
 
-  -h, --help            show this help message and exit
-  --credentials CREDENTIALS
-                        Path to the credentials JSON.
-  --path PATH           Path to save the data to. Will overwrite existing files.
-  --test-path TEST_PATH
-                        Path to save the data to, for testing functionality.
-  --heartbeat           Test the DataQuery API heartbeat and exit.
-  --progress            Whether to show a progress bar for the download.
+arguments:
+-h, --help            show this help message and exit
+--credentials CREDENTIALS
+                      Path to the credentials JSON.
+--path PATH           Path to save the data to. Will overwrite existing files.
+--test-path TEST_PATH
+                      Path to save the data to, for testing functionality.
+--heartbeat           Test the DataQuery API heartbeat and exit.
+--timeseries          Save the data in the timeseries format instead of the JPMaQS format.
+--progress            Whether to show a progress bar for the download.
 ```
 
 3. Test settings and connection:
@@ -101,7 +103,7 @@ python dataquery_api_jpmaqs.py --test-path ./test-data
 Given that the full dataset is quite large, it is highly recommended to use the `--progress` flag to monitor the download progress. The data will be saved to the specified path, and will overwrite any existing files.
 
 ```bash
- python .\dataquery_api_jpmaqs.py --progress --path ./all-data --credentials credentials.json
+python dataquery_api_jpmaqs.py --progress --path ./all-data --credentials credentials.json
 ```
 
 ### Running `example.py`:
