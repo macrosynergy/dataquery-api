@@ -850,11 +850,8 @@ def download_all_jpmaqs_to_disk(
         proxy=proxy,
     ) as dq:
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
-        import pickle
 
-        with open("tickers.pkl", "rb") as f:
-            tickers = pickle.load(f)
-        # tickers = tickers[:200]
+        tickers = dq.get_catalogue()
         expressions = construct_jpmaqs_expressions(tickers)
         data: List[Dict] = dq.download(
             expressions=expressions,
