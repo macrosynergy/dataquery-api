@@ -1036,7 +1036,6 @@ def cli():
         type=str,
         help="Path to save the data to. Will overwrite existing files.",
         required=False,
-        # default="data",
     )
 
     parser.add_argument(
