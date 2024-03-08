@@ -1077,8 +1077,8 @@ def cli():
         print(f"Error getting credentials - {type(e).__name__} : {e}")
         return
 
+    heartbeat_test(**creds)
     if args.heartbeat:
-        heartbeat_test(**creds)
         return
 
     if args.path is None and args.test_path is None:
