@@ -78,7 +78,6 @@ def form_full_url(url: str, params: Dict = {}) -> str:
 
     :param <str> url: base URL.
     :param <dict> params: dictionary of parameters.
-
     :return <str>: full URL
     """
     return requests.compat.quote(
@@ -129,7 +128,6 @@ def time_series_to_df(dicts_list: List[Dict]) -> pd.DataFrame:
 
     :param dicts_list <list>: List of dictionaries containing time series
         data from the DataQuery API
-    Returns
     :return <pd.DataFrame>: DataFrame containing the data
     """
     if isinstance(dicts_list, dict):
@@ -159,10 +157,16 @@ def save_ts_to_jpmaqs_csv(
     Saves the timeseries data to a CSV file in the JPMaQS format, with all data for a single ticker
     saved to a single file. Only accepts timeseries data for a single ticker.
     Returns a list of saved expressions.
+
+    :param timeseries_list <list>: List of dictionaries containing timeseries data from the DataQuery API.
+    :param path <str>: Path to save the data to.
+    :param drop_na <bool>: Whether to drop rows with NaN values.
+    :return <list>: List of dictionaries containing saved expressions and file paths.
     """
 
     getexprts = lambda d: d["attributes"][0]["expression"]
     getts = lambda d: d["attributes"][0]["time-series"]
+    getmsg = lambda d: d["attributes"][0].get("message", None)
     splitexpr = lambda s: str(s).replace("DB(JPMAQS,", "").replace(")", "").split(",")
     getticker = lambda s: splitexpr(s)[0]
     getmetric = lambda s: splitexpr(s)[1]
@@ -206,6 +210,8 @@ def save_ts_to_jpmaqs_csv(
 
         return construct_jpmaqs_expressions(ticker, mtrs)
 
+    # drop expressions with no timeseries data
+    timeseries_list = list(filter(lambda d: getts(d) is not None, timeseries_list))
     tickers_in_ts = list(set([getticker(getexprts(_ts)) for _ts in timeseries_list]))
     all_found_expressions = list(map(getexprts, timeseries_list))
     saved_expressions = []
@@ -258,7 +264,6 @@ def request_wrapper(
 
     :param url <str>: URL to make request to
     :param params <dict>: Parameters to pass to request
-
     :return <requests.Response>: Response object
     """
     # this function wraps the requests.request() method in a try/except block
@@ -290,6 +295,18 @@ def request_wrapper(
 
 
 class DQInterface:
+    """
+    Class to interface with the JPMorgan DataQuery API (OAuth only).
+
+    :param client_id <str>: Client ID for the DataQuery API.
+    :param client_secret <str>: Client secret for the DataQuery API.
+    :param proxy <Optional[Dict]>: Proxy settings for the request.
+    :param batch_size <int>: Number of expressions to download per request. Defaults to 20,
+        which is the maximum number allowed by the DataQuery API specifications.
+    :param base_url <str>: Base URL for the DataQuery API.
+    :param dq_resource_id <Optional[str]>: Resource ID for the DataQuery API.
+    """
+
     def __init__(
         self,
         client_id: str,
@@ -322,7 +339,7 @@ class DQInterface:
         """
         Helper function to verify if the current token is active and valid,
         and request a new one if it is not.
-        Returns
+
         :return <str>: Access token
         """
 
@@ -399,6 +416,15 @@ class DQInterface:
         return result
 
     def _fetch(self, url: str, params: dict, **kwargs) -> List[Dict]:
+        """
+        Fetch data from the DataQuery API, and catch any exceptions or errors with the response.
+
+        :param url <str>: URL to make request to.
+        :param params <dict>: Parameters to pass to request.
+        :param kwargs: Additional keyword arguments to pass to the request.
+        :return <List[Dict]>: List of dictionaries containing data.
+        """
+
         downloaded_data: List[Dict] = []
         response: Dict = self._request(url=url, params=params, **kwargs)
 
@@ -450,9 +476,7 @@ class DQInterface:
         different group's catalogue.
 
         :param <str> group_id: the group ID to fetch the catalogue for.
-
         :return <List[str]>: list of tickers in the JPMaQS group.
-
         :raises <ValueError>: if the response from the server is not valid.
         """
         if verbose:
@@ -548,7 +572,6 @@ class DQInterface:
 
         :param expressions <list>: List of expressions to download
         :param params <dict>: Dictionary of parameters to pass to the request
-        Returns
         :return <list>: List of dictionaries containing data
         """
         if max_retry < 0:
@@ -786,29 +809,6 @@ class DQInterface:
         return downloaded_data
 
 
-def concat_csvs_to_df(
-    real_date="real_date",
-    df_paths: List[str] = [],
-    metrics: List[str] = [],
-    path=str,
-) -> pd.DataFrame:
-
-    (
-        functools.reduce(
-            lambda x, y: pd.merge(x, y, on=real_date, how="outer"),
-            [
-                pd.read_csv(f, parse_dates=[real_date])
-                .rename(columns={"value": metric})
-                .set_index(real_date)
-                for f, metric in zip(df_paths, metrics)
-            ],
-        )
-        .sort_values(by=real_date)
-        .reset_index()
-        .to_csv(path, index=False)
-    )
-
-
 def summary_jpmaqs_csvs(
     path: str, expressions_list: Optional[List[str]] = True
 ) -> Dict:
@@ -820,8 +820,8 @@ def summary_jpmaqs_csvs(
         metrics = list(set(df.columns) - {"real_date"})
         summary[ticker] = {
             "path": file,
-            "start_date": df["real_date"].min(),
-            "end_date": df["real_date"].max(),
+            "start_date": df["real_date"].min().strftime("%Y-%m-%d"),
+            "end_date": df["real_date"].max().strftime("%Y-%m-%d"),
             "metrics": metrics,
             "n_cols": df.shape[1],
             "expressions": construct_jpmaqs_expressions(ticker, metrics),
@@ -836,8 +836,8 @@ def summary_jpmaqs_csvs(
         for i in range(0, (min(len(missing_exprs), 25))):
             print(f"Expression missing from downloaded data: {missing_exprs[i]}")
 
-        if len(missing_exprs) > i:
-            print(f"... (truncated {len(missing_exprs) - i} warnings)")
+        if len(missing_exprs) > i + 1:
+            print(f"... (truncated {len(missing_exprs) - i -1} warnings)")
             print(f"Total missing expressions: {len(missing_exprs)}")
 
     return summary
@@ -849,20 +849,20 @@ def download_all_jpmaqs_to_disk(
     proxy: Optional[Dict] = None,
     path="./data",
     show_progress: bool = False,
-    drop_na: bool = True,
     jpmaqs_formatting: bool = True,
-    overwrite: bool = False,
+    test_expressions: Optional[List[str]] = None,
 ):
     """
     Download all JPMaQS data to disk.
 
     :param client_id <str>: Client ID for the DataQuery API.
     :param client_secret <str>: Client secret for the DataQuery API.
+    :param proxy <Optional[Dict]>: Proxy settings for the request.
     :param path <str>: Path to save the data to.
     :param start_date <str>: Start date of data to download.
     :param end_date <str>: End date of data to download.
     :param show_progress <bool>: Whether to show a progress bar for the download.
-    :param drop_na <bool>: Whether to drop rows with NaN values.
+    :param jpmaqs_formatting <bool>: Whether to format the data in the JPMaQS format.
     """
     if not isinstance(path, str):
         raise ValueError("`path` must be a string.")
@@ -871,12 +871,10 @@ def download_all_jpmaqs_to_disk(
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
     else:
-        if overwrite:
-            shutil.rmtree(path)
-            os.makedirs(path, exist_ok=True)
+        shutil.rmtree(path)
+        os.makedirs(path, exist_ok=True)
 
     data: List[Dict[str, str]] = []  # [{expression:file}, {expression:file}, ...]
-    tickers = []
     expressions = []
     with DQInterface(
         client_id=client_id,
@@ -885,17 +883,22 @@ def download_all_jpmaqs_to_disk(
         batch_size=5,
     ) as dq:
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
-        tickers = dq.get_catalogue()
-        expressions = construct_jpmaqs_expressions(tickers) + ["testing-foobar"]
+        if not test_expressions:
+            tickers = dq.get_catalogue()
+            expressions = construct_jpmaqs_expressions(tickers)
+        else:
+            expressions = test_expressions
         data: List[Dict] = dq.download(
             expressions=expressions,
             path=path,
             show_progress=show_progress,
             jpmaqs_formatting=jpmaqs_formatting,
-            drop_na=drop_na,
         )
     if jpmaqs_formatting:
-        summary_jpmaqs_csvs(path, expressions_list=expressions)
+        json.dump(
+            summary_jpmaqs_csvs(path, expressions_list=expressions),
+            open(os.path.join(path, "info.json"), "w"),
+        )
     else:
         wmax = 0
         for dx in tqdm(data, desc="Verifying files"):
@@ -913,38 +916,32 @@ def download_all_jpmaqs_to_disk(
 
 
 def example_usage(
-    client_id: str, client_secret: str, proxy: Optional[Dict] = None, test_path=None
+    client_id: str,
+    client_secret: str,
+    proxy: Optional[Dict] = None,
+    test_path=None,
+    show_progress: bool = False,
+    jpmaqs_formatting: bool = True,
 ):
     """
     Example usage of the DQInterface class.
     Click "[source]" to see the code.
     """
-    if test_path is not None:
-        path = os.path.join(os.path.expanduser(path), "JPMaQSDATA").replace("\\", "/")
-        if not os.path.exists(path):
-            os.makedirs(path, exist_ok=True)
 
     cids = ["USD", "EUR", "GBP", "AUD"]
     xcats = ["EQXR_NSA", "FXXR_NSA", "EQXR_VT10", "EXALLOPENNESS_NSA_1YMA"]
-    tickers = [f"{cid}_{xcat}" for cid in cids for xcat in xcats] + ["testing-foobar"]
+    tickers = [f"{cid}_{xcat}" for cid in cids for xcat in xcats]
     expressions = construct_jpmaqs_expressions(tickers)
 
-    with DQInterface(
+    download_all_jpmaqs_to_disk(
         client_id=client_id,
         client_secret=client_secret,
         proxy=proxy,
-    ) as dq:
-        assert dq.heartbeat(), "DataQuery API Heartbeat failed."
-        data: pd.DataFrame = dq.download(
-            expressions=expressions,
-            start_date="2023-02-20",
-            end_date="2023-03-01",
-            path=test_path,
-        )
-
-        if not test_path:
-            assert isinstance(data, pd.DataFrame)
-            print(data.head(20))
+        path=test_path,
+        test_expressions=expressions,
+        show_progress=show_progress,
+        jpmaqs_formatting=jpmaqs_formatting,
+    )
 
 
 def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = None):
@@ -986,7 +983,6 @@ def get_credentials(file: str) -> Dict:
     Get the credentials from a JSON file.
 
     :param file <str>: Path to the credentials JSON file.
-
     :return <dict>: Dictionary containing the credentials.
     """
     try:
@@ -1020,32 +1016,6 @@ def get_credentials(file: str) -> Dict:
 
 
 def cli():
-    """
-    CLI Arguments to download JPMaQS data.
-
-    Usage:
-
-    .. code-block:: bash
-
-        python dataquery_api.py --credentials <path_to_credentials> --path <path_to_save_data> --progress <bool>
-
-    Your credentials file should look like this (proxy is optional):
-
-    .. code-block:: python
-
-        {
-            "client_id": "your_client_id",
-            "client_secret": "your_client_secret"
-            "proxy": {
-                "https": "https://your_proxy:port",
-                }
-        }
-
-    :param credentials <str>: Path to the credentials JSON (``--credentials``).
-    :param path <str>: Path to save the data to (``--path``). If not provided, only a few
-        timeseries will be downloaded as a DataFrame and printed. This is only for testing.
-    :param progress <bool>: Whether to show a progress bar for the download (``--progress``).
-    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Download JPMaQS data.")
@@ -1054,15 +1024,13 @@ def cli():
         "--credentials",
         type=str,
         help="Path to the credentials JSON.",
-        # required=True,
         default="credentials.json",
     )
     parser.add_argument(
         "--path",
         type=str,
-        help="Path to save the data to.",
+        help="Path to save the data to. Will overwrite existing files.",
         required=False,
-        default="./data",
     )
 
     parser.add_argument(
@@ -1082,34 +1050,19 @@ def cli():
     )
 
     parser.add_argument(
+        "--timeseries",
+        action="store_true",
+        help="Save the data in the timeseries format instead of the JPMaQS format.",
+        required=False,
+        default=False,
+    )
+
+    parser.add_argument(
         "--progress",
         action="store_true",
         help="Whether to show a progress bar for the download.",
         required=False,
         default=True,
-    )
-
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Whether to overwrite existing files.",
-        required=False,
-        default=False,
-    )
-    parser.add_argument(
-        "--timeseries",
-        action="store_true",
-        default=False,
-        required=False,
-        help="Whether to download data as a timeseries or in the JPMaQS format.",
-    )
-
-    parser.add_argument(
-        "--dropna",
-        type=bool,
-        default=False,
-        required=False,
-        help="Whether to drop rows/entries with **all** NaN values.",
     )
 
     args = parser.parse_args()
@@ -1123,16 +1076,24 @@ def cli():
         heartbeat_test(**creds)
         return
 
+    if args.path is None and args.test_path is None:
+        parser.print_help()
+        return 
+
     if args.path is None:
-        example_usage(**creds, test_path=args.test_path)
+        if args.test_path is not None:
+            example_usage(
+                **creds,
+                test_path=args.test_path,
+                show_progress=args.progress,
+                jpmaqs_formatting=not args.timeseries,
+            )
     else:
         download_all_jpmaqs_to_disk(
             **creds,
             path=args.path,
             show_progress=args.progress,
-            overwrite=args.overwrite,
             jpmaqs_formatting=not args.timeseries,
-            drop_na=args.dropna,
         )
 
 

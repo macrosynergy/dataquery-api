@@ -8,7 +8,7 @@ A simple Python API client for the [JPMorgan DataQuery](https://www.jpmorgan.com
 
 1. OAuth Credentials (Client ID and Client Secret) from [JPMorgan Developer Portal](https://developer.jpmorgan.com/) with access to the DataQuery API.
 
-1. Python 3.6+
+1. Python 3.8+
 
 1. An active internet connection
 
@@ -20,13 +20,91 @@ A simple Python API client for the [JPMorgan DataQuery](https://www.jpmorgan.com
 git clone https://github.com/macrosynergy/dataquery-api.git
 ```
 
+or simply copy the relevant files to your project directory.
+
 2. Install the dependencies
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-## Running `example.py`:
+or simply:
+
+```bash
+python -m pip install requests pandas tqdm
+```
+
+Note: `tqdm` is only used for the progress bar, and is not essential to the functioning of the API client.
+
+## Usage/Examples:
+
+### Running `dataquery_api_jpmaqs.py`:
+
+1. Save credentials to a JSON file, e.g. `credentials.json` (`proxy` is optional):
+
+```json
+{
+  "client_id": "<your_client_id>",
+  "client_secret": "<your_client_secret>",
+  "proxy": {
+    "https": "http://your_proxy:port"
+  }
+}
+```
+
+2. Runing the script:
+
+```
+$ python dataquery_api_jpmaqs.py [-h] [--credentials CREDENTIALS] [--path PATH] [--test-path TEST_PATH] [--heartbeat] [--progress]
+
+  -h, --help            show this help message and exit
+  --credentials CREDENTIALS
+                        Path to the credentials JSON.
+  --path PATH           Path to save the data to. Will overwrite existing files.
+  --test-path TEST_PATH
+                        Path to save the data to, for testing functionality.
+  --heartbeat           Test the DataQuery API heartbeat and exit.
+  --progress            Whether to show a progress bar for the download.
+```
+
+3. Test settings and connection:
+
+Testing the connection and authentication with the DataQuery API:
+
+```bash
+python dataquery_api_jpmaqs.py --heartbeat --credentials credentials.json
+```
+
+```
+>> Connection to DataQuery API
+>> Authentication + Heartbeat took 2.10 seconds.
+```
+
+Testing a download with a few tickers:
+
+```bash
+python dataquery_api_jpmaqs.py --test-path ./test-data
+```
+
+```
+>> Timestamp (UTC): 2024-03-08 14:57:26.97
+>> Downloading from DataQuery API:
+>> Download done.
+>> Timestamp (UTC): 2024-03-08 14:57:29.75.
+>> Download took 0mins 3.9s.
+>> Data saved to ./test-data/JPMaQSDATA.
+>> Downloaded 60 / 68 expressions.
+```
+
+4. Downloading the full dataset:
+
+Given that the full dataset is quite large, it is highly recommended to use the `--progress` flag to monitor the download progress. The data will be saved to the specified path, and will overwrite any existing files.
+
+```bash
+ python .\dataquery_api_jpmaqs.py --progress --path ./all-data --credentials credentials.json
+```
+
+### Running `example.py`:
 
 You'll need to replace the `client_id` and `client_secret` in `dataquery_api.py` with your own OAuth credentials. This can be using a config.yml/json file, environment variables, or hardcoding them in the file (not recommended).
 
@@ -39,7 +117,7 @@ client_id = "<your_client_id>"  # replace with your client id & secret
 client_secret = "<your_client_secret>"
 
 # initialize the DQInterface object with your client id & secret
-dq: DQInterface = DQInterface(client_id, client_secret)
+dq = DQInterface(client_id, client_secret)
 
 # check that you have a valid token and can access the API
 assert dq.heartbeat(), "DataQuery API Heartbeat failed."
@@ -50,17 +128,14 @@ expressions = [
     "DB(JPMAQS,AUD_EXALLOPENNESS_NSA_1YMA,value)",
 ]
 
-
 # dates as strings in the format YYYY-MM-DD
-start_date: str = "2020-01-25"
-end_date: str = "2023-02-05"
+start_date = "2020-01-25"
+end_date = "2023-02-05"
 
 # download the data
-data: pd.DataFrame = dq.download(
+data = dq.download(
     expressions=expressions, start_date=start_date, end_date=end_date
 )
 
-
 print(data.head())
-
 ```
