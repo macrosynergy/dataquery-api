@@ -892,7 +892,7 @@ def download_all_jpmaqs_to_disk(
         client_id=client_id,
         client_secret=client_secret,
         proxy=proxy,
-        batch_size=EXPR_LIMIT,
+        batch_size=8,
     ) as dq:
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
         if not test_expressions:
@@ -1058,7 +1058,7 @@ def cli(
         type=str,
         help="Path to save the data to. Will overwrite existing files.",
         required=False,
-        default="E:/tickers/"
+        default=None,
     )
 
     parser.add_argument(
@@ -1090,7 +1090,7 @@ def cli(
         action="store_true",
         help="Whether to show a progress bar for the download.",
         required=False,
-        default=True,
+        default=False,
     )
 
     args = parser.parse_args()
