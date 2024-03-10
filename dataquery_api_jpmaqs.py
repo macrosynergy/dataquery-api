@@ -1051,7 +1051,7 @@ def cli(
         type=str,
         help="Path to the credentials JSON.",
         required=False,
-        default="credentials.json",
+        default=None,
     )
     parser.add_argument(
         "--path",
@@ -1149,6 +1149,8 @@ if __name__ == "__main__":
 
     client_id = None  # "your_client_id"
     client_secret = None  # "your_client_secret"
+    client_id = os.environ.get("DQ_CLIENT_ID", client_id)
+    client_secret = os.environ.get("DQ_CLIENT_SECRET", client_secret)
     proxy = None  # {"https": "https://your_proxy:port"}
 
     cli(
