@@ -893,7 +893,7 @@ def download_all_jpmaqs_to_disk(
         client_id=client_id,
         client_secret=client_secret,
         proxy=proxy,
-        # batch_size=8,
+        batch_size=8,
     ) as dq:
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
         if not test_expressions:
