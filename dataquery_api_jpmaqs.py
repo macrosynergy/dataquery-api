@@ -500,6 +500,9 @@ class DQInterface:
         ):
             raise ValueError("The downloaded catalogue is corrupt.")
 
+        if verbose:
+            print(f"Downloaded {utkr_count} tickers from the {group_id} catalogue.")
+
         return tickers
 
     def _get_result(
@@ -625,6 +628,9 @@ class DQInterface:
 
                 except Exception as e:
                     if isinstance(e, KeyboardInterrupt):
+                        print("\n\t------ Keyboard Interrupt ------\n\t")
+                        print("Aborting download.")
+                        executor.shutdown(wait=False, cancel_futures=True)
                         raise e
 
                     continuous_failures += 1
@@ -732,7 +738,10 @@ class DQInterface:
         if self.heartbeat(raise_error=True):
             print(f"Timestamp (UTC): {UTCNOW()}")
 
-        print("Downloading from DataQuery API:")
+        print(
+            f"Downloading {len(expressions)} expressions, from {start_date} to {end_date}.\n"
+            "Downloading data from DataQuery:"
+        )
 
         downloaded_data: Union[List[Dict], List[str]] = self._get_timeseries(
             expressions=expressions,
@@ -755,14 +764,15 @@ class DQInterface:
                 assert all(isinstance(f, dict) for f in downloaded_data)
                 exprs = list(set([d["expression"] for d in downloaded_data]))
                 print(f"Data saved to {path}.")
-                print(f"Downloaded {len(exprs)} / {len(expressions)} tickers.")
+                print(f"Downloaded {len(exprs)} / {len(expressions)} expressions.")
+
                 return downloaded_data
 
             assert all(isinstance(f, str) for f in downloaded_data)
-            print(f"Data saved to {path}.")
             print(
                 f"Downloaded {len(downloaded_data)} / {len(expressions)} expressions."
             )
+            print(f"Data saved to {path}.")
             result = [
                 {
                     "expression": str(os.path.basename(f)).split(".")[0],
@@ -808,8 +818,9 @@ class DQInterface:
 
 
 def summary_jpmaqs_csvs(
-    path: str, expressions_list: Optional[List[str]] = True
-) -> Dict:
+    path: str,
+    expressions_list: Optional[List[str]] = True,
+) -> pd.DataFrame:
     files = glob.glob(os.path.join(path, "**", "*.csv"), recursive=True)
     summary = {}
     for file in tqdm(files, desc="Verifying files"):
@@ -832,13 +843,16 @@ def summary_jpmaqs_csvs(
     missing_exprs = list(set(expressions_list) - set(found_exprs))
     if len(missing_exprs) > 0:
         for i in range(0, (min(len(missing_exprs), 25))):
-            print(f"Expression missing from downloaded data: {missing_exprs[i]}")
+            print(f"\tExpression missing from downloaded data: {missing_exprs[i]}")
 
         if len(missing_exprs) > i + 1:
-            print(f"... (truncated {len(missing_exprs) - i -1} warnings)")
-            print(f"Total missing expressions: {len(missing_exprs)}")
+            print(f"\t\t... (truncated {len(missing_exprs) - i -1} warnings)")
+            print(f"\tTotal missing expressions: {len(missing_exprs)}")
 
-    return summary
+    summary_df = (
+        pd.DataFrame(summary).T.reset_index().rename(columns={"index": "ticker"})
+    )
+    return summary_df
 
 
 def download_all_jpmaqs_to_disk(
@@ -895,15 +909,13 @@ def download_all_jpmaqs_to_disk(
         )
     if jpmaqs_formatting:
         summary = summary_jpmaqs_csvs(path, expressions_list=expressions)
-        with open(
-            os.path.join(
-                os.path.dirname(path),
-                f"download_summary_{datetime.now().strftime('%Y%m%d%H%M%S')}.json",
-            ),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            json.dump(summary, f, indent=4)
+        fname = os.path.join(
+            os.path.dirname(path),
+            f"download_summary_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv",
+        )
+        summary.to_csv(fname, index=False)
+        print(f"Summary of downloaded data saved to {fname}")
+
     else:
         wmax = 0
         for dx in tqdm(data, desc="Verifying files"):
@@ -1002,7 +1014,7 @@ def get_credentials(file: str) -> Dict:
                 raise ValueError("`proxy` must be a dictionary.")
 
             res = {a: res[a] for a in (cks + ["proxy"]) if res.get(a, None) is not None}
-
+            print("Successfully loaded credentials.")
             return res
     except Exception as e:
         print(
@@ -1012,7 +1024,7 @@ def get_credentials(file: str) -> Dict:
         {
             "client_id": "your_client_id",
             "client_secret": "your_client_secret"
-            "proxy": { "https": "https://your_proxy:port", }
+            "proxy": { "https": "https://your_proxy:port" }
         }
     ========== Error getting credentials ==========
         """
@@ -1020,7 +1032,16 @@ def get_credentials(file: str) -> Dict:
         raise e
 
 
-def cli():
+def cli(
+    client_id: Optional[str] = None,
+    client_secret: Optional[str] = None,
+    proxy: Optional[Dict] = None,
+    path: Optional[str] = None,
+    test_path: Optional[str] = None,
+    heartbeat: bool = False,
+    timeseries: bool = False,
+    progress: bool = True,
+):
     import argparse
 
     parser = argparse.ArgumentParser(description="Download JPMaQS data.")
@@ -1029,6 +1050,7 @@ def cli():
         "--credentials",
         type=str,
         help="Path to the credentials JSON.",
+        required=False,
         default="credentials.json",
     )
     parser.add_argument(
@@ -1036,6 +1058,7 @@ def cli():
         type=str,
         help="Path to save the data to. Will overwrite existing files.",
         required=False,
+        default="E:/tickers/"
     )
 
     parser.add_argument(
@@ -1071,18 +1094,37 @@ def cli():
     )
 
     args = parser.parse_args()
-    try:
-        creds = get_credentials(args.credentials)
-    except Exception as e:
-        print(f"Error getting credentials - {type(e).__name__} : {e}")
+
+    # both client id and secret must be provided
+    if client_id is None and client_secret is None:
+        if args.credentials is None:
+            parser.print_help()
+            return
+
+    if bool(client_id) != bool(client_secret):
+        raise ValueError("Both `client_id` and `client_secret` must be provided.")
+
+    creds = {"client_id": client_id, "client_secret": client_secret, "proxy": proxy}
+
+    if args.credentials is not None:
+        try:
+            creds = get_credentials(args.credentials)
+        except Exception as e:
+            print(f"Error getting credentials - {type(e).__name__} : {e}")
+            return
+
+    args.path = args.path if args.path is not None else path
+    args.test_path = args.test_path if args.test_path is not None else test_path
+    args.heartbeat = args.heartbeat or heartbeat
+    args.timeseries = args.timeseries or timeseries
+    args.progress = args.progress or progress
+
+    if args.path is None and args.test_path is None and not args.heartbeat:
+        parser.print_help()
         return
 
     heartbeat_test(**creds)
     if args.heartbeat:
-        return
-
-    if args.path is None and args.test_path is None:
-        parser.print_help()
         return
 
     if args.path is None:
@@ -1103,4 +1145,15 @@ def cli():
 
 
 if __name__ == "__main__":
-    cli()
+    # If setting credentials in the script, or as environment variables, use the following:
+
+    client_id = None  # "your_client_id"
+    client_secret = None  # "your_client_secret"
+    proxy = None  # {"https": "https://your_proxy:port"}
+
+    cli(
+        client_id=client_id,
+        client_secret=client_secret,
+        proxy=proxy,
+        # add any other arguments you need, check cli docstring for details
+    )
