@@ -820,10 +820,11 @@ class DQInterface:
 def summary_jpmaqs_csvs(
     path: str,
     expressions_list: Optional[List[str]] = True,
+    show_progress: bool = False,
 ) -> pd.DataFrame:
     files = glob.glob(os.path.join(path, "**", "*.csv"), recursive=True)
     summary = {}
-    for file in tqdm(files, desc="Verifying files"):
+    for file in tqdm(files, desc="Verifying files", disable=not show_progress):
         ticker = os.path.basename(file).split(".")[0]
         df = pd.read_csv(file, parse_dates=["real_date"])
         metrics = list(set(df.columns) - {"real_date"})
@@ -892,7 +893,7 @@ def download_all_jpmaqs_to_disk(
         client_id=client_id,
         client_secret=client_secret,
         proxy=proxy,
-        batch_size=8,
+        # batch_size=8,
     ) as dq:
         assert dq.heartbeat(), "DataQuery API Heartbeat failed."
         if not test_expressions:
@@ -908,10 +909,12 @@ def download_all_jpmaqs_to_disk(
             jpmaqs_formatting=jpmaqs_formatting,
         )
     if jpmaqs_formatting:
-        summary = summary_jpmaqs_csvs(path, expressions_list=expressions)
+        summary = summary_jpmaqs_csvs(
+            path, expressions_list=expressions, show_progress=show_progress
+        )
         fname = os.path.join(
             os.path.dirname(path),
-            f"download_summary_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv",
+            f"jpmaqs_download_summary_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv",
         )
         summary.to_csv(fname, index=False)
         print(f"Summary of downloaded data saved to {fname}")
