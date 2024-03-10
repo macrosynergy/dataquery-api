@@ -913,7 +913,7 @@ def download_all_jpmaqs_to_disk(
             path, expressions_list=expressions, show_progress=show_progress
         )
         fname = os.path.join(
-            os.path.dirname(path),
+            path,
             f"jpmaqs_download_summary_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv",
         )
         summary.to_csv(fname, index=False)
