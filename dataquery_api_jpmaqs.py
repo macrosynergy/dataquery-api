@@ -966,32 +966,252 @@ def download_all_jpmaqs_to_disk(
             print(f"Total missing files: {wmax}")
 
 
-if __name__ == "__main__":
-    # Example usage
-    client_id = "your_client_id"
-    client_secret = "your_client_secret"
-    # proxy = {'http': 'http://proxy.example.com:8080'}
-    path = "path/to/save/data"
+# CLI and example usage
 
-    # download any specific expressions
-    with DQInterface(client_id=client_id, client_secret=client_secret) as dq:
-        expressions = construct_jpmaqs_expressions(["GBP_FXXR_NSA", "USD_EQXR_NSA"])
-        dq.download(
-            expressions=expressions,
-            start_date="2020-01-01",
-            end_date="2021-01-01",
-            path=path,
-            show_progress=True,
-            jpmaqs_formatting=True,
-        )
-        
-    # or download all JPMaQS data
+
+def example_usage(
+    client_id: str,
+    client_secret: str,
+    proxy: Optional[Dict] = None,
+    test_path=None,
+    show_progress: bool = False,
+    jpmaqs_formatting: bool = True,
+):
+    """
+    Example usage of the DQInterface class.
+    Click "[source]" to see the code.
+    """
+
+    cids = ["USD", "EUR", "GBP", "AUD"]
+    xcats = ["EQXR_NSA", "FXXR_NSA", "EQXR_VT10", "EXALLOPENNESS_NSA_1YMA"]
+    tickers = [f"{cid}_{xcat}" for cid in cids for xcat in xcats]
+    expressions = construct_jpmaqs_expressions(tickers)
+
     download_all_jpmaqs_to_disk(
         client_id=client_id,
         client_secret=client_secret,
-        # proxy=proxy,
-        path=path,
-        show_progress=True,
-        jpmaqs_formatting=True,
+        proxy=proxy,
+        path=test_path,
+        test_expressions=expressions,
+        show_progress=show_progress,
+        jpmaqs_formatting=jpmaqs_formatting,
     )
 
+    print(
+        "\t" + "--" * 20,
+        "\n\tNOTE: USD_FXXR_NSA is not a valid expression,",
+        "\n\tand is only used to demonstrate error handling in example usage.",
+        "\n\t" + "--" * 20,
+    )
+
+
+def heartbeat_test(client_id: str, client_secret: str, proxy: Optional[Dict] = None):
+    """
+    Test the DataQuery API heartbeat.
+
+    :param client_id <str>: Client ID for the DataQuery API.
+    :param client_secret <str>: Client secret for the DataQuery API.
+    :param proxy <dict>: Dictionary containing the proxy settings.
+
+    :return <bool>: True if the heartbeat is successful, False otherwise.
+    """
+
+    with DQInterface(
+        client_id=client_id, client_secret=client_secret, proxy=proxy
+    ) as dq:
+        start = time.time()
+        hb = dq.heartbeat()
+        end = time.time()
+        if not hb:
+            print(
+                f"Connection to DataQuery API failed."
+                "Retrying and logging printing error to stdout."
+            )
+            start = time.time()
+            dq.heartbeat(raise_error=True)
+            end = time.time()
+
+        if hb:
+            print(f"Connection to DataQuery API")
+            print(
+                "Authentication + Heartbeat took"
+                f" {end - start - API_DELAY_PARAM:.2f} seconds."
+            )
+
+
+def get_credentials(file: str) -> Dict:
+    """
+    Get the credentials from a JSON file.
+
+    :param file <str>: Path to the credentials JSON file.
+    :return <dict>: Dictionary containing the credentials.
+    """
+    try:
+        emsg = "`{cred}` not found in the credentials file ('" + file + "')."
+        cks = ["client_id", "client_secret"]
+        with open(file, "r") as f:
+            res: dict = json.load(f)
+            for ck in cks:
+                if ck not in res.keys():
+                    raise ValueError(emsg.format(cred=ck))
+            if not isinstance(res.get("proxy", {}), dict):
+                raise ValueError("`proxy` must be a dictionary.")
+
+            res = {a: res[a] for a in (cks + ["proxy"]) if res.get(a, None) is not None}
+            print("Successfully loaded credentials.")
+            return res
+    except Exception as e:
+        print(
+            """
+    ========== Error getting credentials ==========
+    The credentials file must be a JSON file with the following format (proxy is optional):
+        {
+            "client_id": "your_client_id",
+            "client_secret": "your_client_secret"
+            "proxy": { "https": "https://your_proxy:port" }
+        }
+    ========== Error getting credentials ==========
+        """
+        )
+        raise e
+
+
+def cli(
+    client_id: Optional[str] = None,
+    client_secret: Optional[str] = None,
+    proxy: Optional[Dict] = None,
+    path: Optional[str] = None,
+    test_path: Optional[str] = None,
+    heartbeat: bool = False,
+    timeseries: bool = False,
+    progress: bool = False,
+    test_expressions: Optional[List[str]] = None,
+):
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Download JPMaQS data.")
+
+    parser.add_argument(
+        "--credentials",
+        type=str,
+        help="Path to the credentials JSON.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--path",
+        type=str,
+        help="Path to save the data to. Will overwrite existing files.",
+        required=False,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--test-path",
+        type=str,
+        help="Path to save the data to, for testing functionality.",
+        required=False,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--heartbeat",
+        action="store_true",
+        help="Test the DataQuery API heartbeat and exit.",
+        required=False,
+        default=False,
+    )
+
+    parser.add_argument(
+        "--timeseries",
+        action="store_true",
+        help="Save the data in the timeseries format instead of the JPMaQS format.",
+        required=False,
+        default=False,
+    )
+
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Whether to show a progress bar for the download.",
+        required=False,
+        default=False,
+    )
+
+    args = parser.parse_args()
+
+    # both client id and secret must be provided
+    if client_id is None and client_secret is None:
+        if args.credentials is None:
+            parser.print_help()
+            return
+
+    if bool(client_id) != bool(client_secret):
+        raise ValueError("Both `client_id` and `client_secret` must be provided.")
+
+    creds = {"client_id": client_id, "client_secret": client_secret, "proxy": proxy}
+
+    if args.credentials is not None:
+        try:
+            creds = get_credentials(args.credentials)
+        except Exception as e:
+            print(f"Error getting credentials - {type(e).__name__} : {e}")
+            return
+
+    args.path = args.path if args.path is not None else path
+    args.test_path = args.test_path if args.test_path is not None else test_path
+    args.heartbeat = args.heartbeat or heartbeat
+    args.timeseries = args.timeseries or timeseries
+    args.progress = args.progress or progress
+
+    if args.path is None and args.test_path is None and not args.heartbeat:
+        parser.print_help()
+        return
+
+    heartbeat_test(**creds)
+    if args.heartbeat:
+        return
+
+    if args.path is None:
+        if args.test_path is not None:
+            example_usage(
+                **creds,
+                test_path=args.test_path,
+                show_progress=args.progress,
+                jpmaqs_formatting=not args.timeseries,
+            )
+    else:
+        download_all_jpmaqs_to_disk(
+            **creds,
+            path=args.path,
+            show_progress=args.progress,
+            jpmaqs_formatting=not args.timeseries,
+            test_expressions=test_expressions,
+        )
+
+
+if __name__ == "__main__":
+    # If setting credentials in the script, or as environment variables,
+    # use the following:
+
+    client_id = None  # "your_client_id"
+    client_secret = None  # "your_client_secret"
+    proxy = None  # {"https": "https://your_proxy:port"}
+
+    cli(
+        client_id=client_id,
+        client_secret=client_secret,
+        proxy=proxy,
+        # add any other arguments you need, check cli docstring for details
+        # path="path/to/save/data",
+        # test_path="path/to/save/test/data",
+        # heartbeat=True,
+        # timeseries=False,
+        # progress=True,
+        # test_expressions=[
+        #     "DB(JPMAQS,GBP_EQXR_NSA,value)",
+        #     "DB(JPMAQS,GBP_EQXR_NSA,grading)",
+        #     "DB(JPMAQS,GBP_EQXR_NSA,eop_lag)",
+        #     "DB(JPMAQS,GBP_EQXR_NSA,mop_lag)",
+        # ],
+    )
