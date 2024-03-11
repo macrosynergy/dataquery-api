@@ -823,6 +823,12 @@ def summary_jpmaqs_csvs(
     show_progress: bool = False,
 ) -> pd.DataFrame:
     files = glob.glob(os.path.join(path, "**", "*.csv"), recursive=True)
+    # remove any file that has "jpmaqs_download_summary" in the name
+    files = [
+        f
+        for f in files
+        if not os.path.basename(f).startswith("jpmaqs_download_summary_")
+    ]
     summary = {}
     for file in tqdm(files, desc="Verifying files", disable=not show_progress):
         ticker = os.path.basename(file).split(".")[0]
@@ -864,6 +870,8 @@ def download_all_jpmaqs_to_disk(
     show_progress: bool = False,
     jpmaqs_formatting: bool = True,
     test_expressions: Optional[List[str]] = None,
+    overwrite: bool = True,
+    retry_missing: bool = True,
 ):
     """
     Download all JPMaQS data to disk.
@@ -876,6 +884,8 @@ def download_all_jpmaqs_to_disk(
     :param end_date <str>: End date of data to download.
     :param show_progress <bool>: Whether to show a progress bar for the download.
     :param jpmaqs_formatting <bool>: Whether to format the data in the JPMaQS format.
+    :param test_expressions <Optional[List[str]]>: List of expressions to download.
+    :param overwrite <bool>: Whether to overwrite existing files.
     """
     if not isinstance(path, str):
         raise ValueError("`path` must be a string.")
@@ -884,8 +894,9 @@ def download_all_jpmaqs_to_disk(
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
     else:
-        shutil.rmtree(path)
-        os.makedirs(path, exist_ok=True)
+        if overwrite:
+            shutil.rmtree(path)
+            os.makedirs(path, exist_ok=True)
 
     data: List[Dict[str, str]] = []  # [{expression:file}, {expression:file}, ...]
     expressions = []
@@ -908,16 +919,39 @@ def download_all_jpmaqs_to_disk(
             show_progress=show_progress,
             jpmaqs_formatting=jpmaqs_formatting,
         )
+
+    summary_df = Optional[pd.DataFrame]
     if jpmaqs_formatting:
-        summary = summary_jpmaqs_csvs(
+        summary_df = summary_jpmaqs_csvs(
             path, expressions_list=expressions, show_progress=show_progress
         )
+
+    if jpmaqs_formatting and ((summary_df is not None) and (len(summary_df) > 0)):
         fname = os.path.join(
             path,
             f"jpmaqs_download_summary_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv",
         )
-        summary.to_csv(fname, index=False)
+        summary_df.to_csv(fname, index=False)
         print(f"Summary of downloaded data saved to {fname}")
+
+        saved_expressions = list(
+            set([_ for elem in summary_df["expressions"].tolist() for _ in elem])
+        )
+        missing_exprs = list(set(expressions) - set(saved_expressions))
+        # retry missing one more time without overwriting
+        if len(missing_exprs) > 0 and retry_missing:
+            print(f"Retrying {len(missing_exprs)} missing expressions.")
+            download_all_jpmaqs_to_disk(
+                client_id=client_id,
+                client_secret=client_secret,
+                proxy=proxy,
+                path=os.path.dirname(path),
+                show_progress=show_progress,
+                jpmaqs_formatting=jpmaqs_formatting,
+                test_expressions=missing_exprs,
+                overwrite=False,
+                retry_missing=False,
+            )
 
     else:
         wmax = 0
