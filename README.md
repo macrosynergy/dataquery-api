@@ -46,8 +46,8 @@ Note: `tqdm` is only used for the progress bar, and is not essential to the func
 
 ```json
 {
-  "client_id": "<your_client_id>",
-  "client_secret": "<your_client_secret>",
+  "client_id": "your_client_id",
+  "client_secret": "your_client_secret",
   "proxy": {
     "https": "http://your_proxy:port"
   }
