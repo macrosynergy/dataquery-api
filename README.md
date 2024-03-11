@@ -76,7 +76,7 @@ arguments:
 Testing the connection and authentication with the DataQuery API:
 
 ```bash
-python dataquery_api_jpmaqs.py --heartbeat --credentials credentials.json
+python dataquery_api_jpmaqs.py --credentials credentials.json --heartbeat
 ```
 
 ```
@@ -87,7 +87,7 @@ python dataquery_api_jpmaqs.py --heartbeat --credentials credentials.json
 Testing a download with a few tickers:
 
 ```bash
-python dataquery_api_jpmaqs.py --test-path ./test-data
+python dataquery_api_jpmaqs.py --credentials credentials.json --test-path ./test-data
 ```
 
 ```
@@ -105,7 +105,7 @@ python dataquery_api_jpmaqs.py --test-path ./test-data
 Given that the full dataset is quite large, it is highly recommended to use the `--progress` flag to monitor the download progress. The data will be saved to the specified path, and will overwrite any existing files.
 
 ```bash
-python dataquery_api_jpmaqs.py --progress --path ./all-data --credentials credentials.json
+python dataquery_api_jpmaqs.py --credentials credentials.json --progress --path ./all-data
 ```
 
 ### Running `dataquery_api.py`:
