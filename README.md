@@ -116,19 +116,34 @@ You'll need to edit the `__main__` block in `dataquery_api.py` to include your o
 # dataquery_api.py
 ...
 # Example usage
-client_id = "your_client_id"
-client_secret = "your_client_secret"
-# proxy = {'http': 'http://proxy.example.com:8080'}
-path = "path/to/save/data"
+if __name__ == "__main__":
+    # Example usage
+    client_id = "your_client_id"
+    client_secret = "your_client_secret"
+    # proxy = {'http': 'http://proxy.example.com:8080'}
+    path = "path/to/save/data"
 
-download_all_jpmaqs_to_disk(
-    client_id=client_id,
-    client_secret=client_secret,
-    # proxy=proxy,
-    path=path,
-    show_progress=True,
-    jpmaqs_formatting=True,
-)
+    # download any specific expressions
+    with DQInterface(client_id=client_id, client_secret=client_secret) as dq:
+        expressions = construct_jpmaqs_expressions(["GBP_FXXR_NSA", "USD_EQXR_NSA"])
+        dq.download(
+            expressions=expressions,
+            start_date="2020-01-01",
+            end_date="2021-01-01",
+            path=path,
+            show_progress=True,
+            jpmaqs_formatting=True,
+        )
+
+    # or download all JPMaQS data
+    download_all_jpmaqs_to_disk(
+        client_id=client_id,
+        client_secret=client_secret,
+        # proxy=proxy,
+        path=path,
+        show_progress=True,
+        jpmaqs_formatting=True,
+    )
 ```
 
 ### Running `example.py`:
