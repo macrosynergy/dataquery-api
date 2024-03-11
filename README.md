@@ -8,9 +8,11 @@ A simple Python API client for the [JPMorgan DataQuery](https://www.jpmorgan.com
 
 1. OAuth Credentials (Client ID and Client Secret) from [JPMorgan Developer Portal](https://developer.jpmorgan.com/) with access to the DataQuery API.
 
-1. Python 3.8+
+2. Python 3.8+
 
-1. An active internet connection
+3. An active internet connection
+
+4. A computer with 1GB+ RAM, and atleast 5GB of free disk space for the full dataset.
 
 ## Setting up:
 
@@ -95,7 +97,7 @@ python dataquery_api_jpmaqs.py --test-path ./test-data
 >> Timestamp (UTC): 2024-03-08 14:57:29.75.
 >> Download took 0mins 3.9s.
 >> Data saved to ./test-data/JPMaQSDATA.
->> Downloaded 60 / 68 expressions.
+>> Downloaded 64 / 64 expressions.
 ```
 
 4. Downloading the full dataset:
@@ -104,6 +106,29 @@ Given that the full dataset is quite large, it is highly recommended to use the 
 
 ```bash
 python dataquery_api_jpmaqs.py --progress --path ./all-data --credentials credentials.json
+```
+
+### Running `dataquery_api.py`:
+
+You'll need to edit the `__main__` block in `dataquery_api.py` to include your own OAuth credentials, and to specify your expressions, start date, and end date. The `dataquery_api.py` script can be run directly from the command line, or imported into another script (as shown in `example.py`).
+
+```python
+# dataquery_api.py
+...
+# Example usage
+client_id = "your_client_id"
+client_secret = "your_client_secret"
+# proxy = {'http': 'http://proxy.example.com:8080'}
+path = "path/to/save/data"
+
+download_all_jpmaqs_to_disk(
+    client_id=client_id,
+    client_secret=client_secret,
+    # proxy=proxy,
+    path=path,
+    show_progress=True,
+    jpmaqs_formatting=True,
+)
 ```
 
 ### Running `example.py`:
