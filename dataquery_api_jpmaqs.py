@@ -1046,11 +1046,14 @@ def get_credentials(file: str) -> Dict:
     :param file <str>: Path to the credentials JSON file.
     :return <dict>: Dictionary containing the credentials.
     """
-    path = os.path.abspath(file)
-    if not path.lower().endswith(".json"):
+    if not isinstance(file, str):
+        raise TypeError("File path must be a string.")
+    if not file.lower().endswith(".json"):
         raise ValueError("Credentials file must be a .json file.")
+    path = os.path.abspath(file)
+
     if not os.path.isfile(path):
-        raise FileNotFoundError(f"File does not exist: {path}")
+        raise FileNotFoundError(f"Credentials file does not exist: {path}")
     try:
         emsg = "`{cred}` not found in the credentials file ('" + path + "')."
         cks = ["client_id", "client_secret"]
