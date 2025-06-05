@@ -1054,6 +1054,7 @@ def get_credentials(file: str) -> Dict:
 
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Credentials file does not exist: {path}")
+    assert os.path.commonpath([path]) == path
     try:
         emsg = "`{cred}` not found in the credentials file ('" + path + "')."
         cks = ["client_id", "client_secret"]
