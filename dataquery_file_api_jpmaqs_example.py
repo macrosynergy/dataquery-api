@@ -28,7 +28,7 @@ Quick start
     # Download latest or historical deltas
     dl.download_latest_delta_files()
     dl.download_delta_files_between("2026-10-12", "2026-10-23")
-    
+
     # Download all deltas ever published to get the full history of JPMaQS
     # ~12 GB / ~16,500 files (as of 2026-10) - takes ~15 minutes depending on network speed
     dl.download_all_deltas()
@@ -64,13 +64,19 @@ from tqdm import tqdm
 
 DQ_TOKEN_URL = "https://authe.jpmchase.com/as/token.oauth2"
 DQ_BASE_URL = "https://api-dataquery.jpmchase.com/research/dataquery-authe/api/v2"
-DQ_FALLBACK_BASE_URL = "https://api-strm-gw01.jpmchase.com/research/dataquery-authe/api/v2"
+DQ_FALLBACK_BASE_URL = (
+    "https://api-strm-gw01.jpmchase.com/research/dataquery-authe/api/v2"
+)
 DQ_SCOPE = "JPMC:URI:RS-06785-DataQueryExternalApi-PROD"
-DQ_RATE_LIMIT = 1 / 25 # 25 requests per second for general endpoints
-DQ_AVAILABLE_FILES_RATE_LIMIT = 1 / 5 # 5 requests per second for available-files endpoint
+DQ_RATE_LIMIT = 1 / 25  # 25 requests per second for general endpoints
+DQ_AVAILABLE_FILES_RATE_LIMIT = (
+    1 / 5
+)  # 5 requests per second for available-files endpoint
 DQ_REQUEST_TIMEOUT = 60  # seconds, for token and listing requests
 DQ_DOWNLOAD_TIMEOUT = 300  # seconds without data before a file download fails
-DQ_MAX_DAYS_PER_REQUEST = 365  # longest date range available-files accepts in one request
+DQ_MAX_DAYS_PER_REQUEST = (
+    365  # longest date range available-files accepts in one request
+)
 JPMAQS_EARLIEST_FILE_DATE = "20230101"
 CATALOG_FILE_GROUP_ID = "JPMAQS_METADATA_CATALOG"
 NOTIFICATIONS_FILE_GROUP_ID = "JPMAQS_METADATA_NOTIFICATIONS"
@@ -348,7 +354,9 @@ class JPMaQSFileDownloader:
         Returns the paths of all of `filenames` that are on disk afterwards, so a
         re-run only fetches what is still missing.
         """
-        results = [self.out_dir / fn for fn in filenames if (self.out_dir / fn).exists()]
+        results = [
+            self.out_dir / fn for fn in filenames if (self.out_dir / fn).exists()
+        ]
         missing = [fn for fn in filenames if not (self.out_dir / fn).exists()]
         print(
             f"{len(filenames)} files listed, {len(results)} already downloaded, "
@@ -414,9 +422,7 @@ class JPMaQSFileDownloader:
         )
         return self.download_files(avail["file-name"].tolist(), n_workers)
 
-    def load_notifications(
-        self, date: Optional[str] = None
-    ) -> dict[str, pd.DataFrame]:
+    def load_notifications(self, date: Optional[str] = None) -> dict[str, pd.DataFrame]:
         """Load the notifications published on `date` (UTC), downloading any missing.
 
         Defaults to the latest date with notifications. Returns one DataFrame per
@@ -445,14 +451,22 @@ class JPMaQSFileDownloader:
             content = json.loads(path.read_text(encoding="utf-8"))
             df = pd.json_normalize(content, record_path=["data"])
             df.columns = [
-                c.replace("(%)", "pct").strip().replace(" ", "_").replace("-", "_").lower()
+                c.replace("(%)", "pct")
+                .strip()
+                .replace(" ", "_")
+                .replace("-", "_")
+                .lower()
                 for c in df.columns
             ]
             notifications[content["metadata"]["sub_title"]] = df
-        print(f"Notifications for {day}: { {k: len(v) for k, v in notifications.items()} }")
+        print(
+            f"Notifications for {day}: { {k: len(v) for k, v in notifications.items()} }"
+        )
         return notifications
 
-    def get_missing_data_notifications(self, date: Optional[str] = None) -> pd.DataFrame:
+    def get_missing_data_notifications(
+        self, date: Optional[str] = None
+    ) -> pd.DataFrame:
         """Tickers not updated as expected on `date`, with the reason where given."""
         n = self.load_notifications(date)
         missing = n.get("Missing Updates", pd.DataFrame())
@@ -494,7 +508,9 @@ class JPMaQSFileDownloader:
             - set(snaps.loc[snaps["_snap"] == latest_date, "file-group-id"])
         )
         if pending:
-            print(f"Not yet published for {latest_date.date()} (re-run later): {pending}")
+            print(
+                f"Not yet published for {latest_date.date()} (re-run later): {pending}"
+            )
         is_kind = is_delta if kind == "delta" else ~is_delta & ~is_meta
         day_files = df[is_kind & (df["_snap"] == latest_date)]
         print(f"Found {len(day_files)} {kind} files for {latest_date.date()}")
@@ -591,7 +607,8 @@ if __name__ == "__main__":
     delta_files = api.download_latest_delta_files()
     print(f"{len(delta_files)} latest delta files on disk.")
     print("\nDownloading all delta files")
-    all_delta_files = api.download_all_deltas()
+    # all_delta_files = api.download_all_deltas()
+    print(f"Skipped downloading all delta files - uncomment the line above to enable.")
 
     # download full-snapshot file for 2026-10-23
     print("\nDownloading snapshot files for 2026-10-23...")
